@@ -147,10 +147,18 @@ def _save_checkpoint(
     )
 
 
-def _make_evaluator(environment, n_maps: int, truncation: int):
+def _make_evaluator(config: TrainingConfig, environment, n_maps: int, truncation: int):
     return eqx.filter_jit(
         lambda pool, network, key: evaluate_paired_vs_random(
-            environment, pool, network, key, n_maps, truncation
+            environment,
+            pool,
+            network,
+            key,
+            n_maps,
+            truncation,
+            pad_to=config.pad_to,
+            history_size=config.history_size,
+            temporal_window=config.temporal_window,
         )
     )
 
@@ -337,7 +345,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
     key, evaluation_pool_key = jax.random.split(key)
     evaluation_pool, _ = evaluation_environment.reset(evaluation_pool_key)
     evaluator = _make_evaluator(
-        evaluation_environment, config.eval_games // 2, config.truncation
+        config, evaluation_environment, config.eval_games // 2, config.truncation
     )
 
     parameters, static = eqx.partition(network, eqx.is_inexact_array)
@@ -554,6 +562,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
                     key, evaluation_pool_key = jax.random.split(key)
                     evaluation_pool, _ = evaluation_environment.reset(evaluation_pool_key)
                     evaluator = _make_evaluator(
+                        config,
                         evaluation_environment,
                         config.eval_games // 2,
                         config.truncation,

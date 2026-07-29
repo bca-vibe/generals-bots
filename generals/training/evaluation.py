@@ -11,8 +11,8 @@ from .actions import decode_action, legal_action_mask
 from .observation import augment_observation, init_observation_memory, temporal_input
 
 
-def _batched_memory(size: int):
-    memory = init_observation_memory()
+def _batched_memory(size: int, pad_to: int, history_size: int, temporal_window: int):
+    memory = init_observation_memory(pad_to, history_size, temporal_window)
     return jax.tree.map(lambda value: jnp.broadcast_to(value, (size, *value.shape)), memory)
 
 
@@ -22,12 +22,23 @@ def _random_action(key, observation, board_mask):
     return decode_action(index)
 
 
-def evaluate_paired_vs_random(environment, pool, network, key, n_maps: int, truncation: int):
+def evaluate_paired_vs_random(
+    environment,
+    pool,
+    network,
+    key,
+    n_maps: int,
+    truncation: int,
+    *,
+    pad_to: int = 21,
+    history_size: int = 7,
+    temporal_window: int = 512,
+):
     """Play every selected map twice, swapping the network's player seat."""
     selected = jax.tree.map(lambda value: value[:n_maps], pool)
     states = jax.tree.map(lambda value: jnp.concatenate([value, value]), selected)
     network_is_zero = jnp.arange(2 * n_maps) < n_maps
-    memory = _batched_memory(2 * n_maps)
+    memory = _batched_memory(2 * n_maps, pad_to, history_size, temporal_window)
     finished = jnp.zeros((2 * n_maps,), dtype=jnp.bool_)
     outcomes = jnp.full((2 * n_maps,), 0.5, dtype=jnp.float32)
 

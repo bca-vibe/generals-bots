@@ -54,9 +54,9 @@ smoke test and promoted to the official pre-train. Target ~36 GPU-hours total:
   kept for provenance.
 - `train_stdout_leg1.log` / `train_stdout_leg2.log` — full stdout of each leg.
 - `smoke_8xh100.toml` — the run config (copy of what the node ran).
-- `dashboard.html` + `build_dashboard.py` + `merge_logs.py` — the live-metrics
-  dashboard (published as a private claude.ai artifact during the run) and its
-  generator: `python3 build_dashboard.py <metrics.jsonl> <out.html> [status]`.
+- `dashboard.html` — the run dashboard (published as a private claude.ai
+  artifact during the run). Generator lives in `tools/dashboard/`:
+  `python3 tools/dashboard/build_dashboard.py <metrics.jsonl> <out.html> [status]`.
 
 Checkpoints (`*.eqx`, ~250 MB each) exceed GitHub's file limit and stay
 gitignored; they are exported from the node to `checkpoints/smoke_8xh100/`

@@ -203,3 +203,14 @@ architecture, configuration, launch, resume, and evaluation details.
       primaryClass = {cs.LG},
 }
 ```
+
+## 🏋️ This fork: competition training
+
+This fork adds a competition-focused research layer on top of the upstream
+library; the upstream layout above is unchanged.
+
+- `generals/training/` — JAX/Equinox PPO self-play trainer ([docs](generals/training/README.md)); canonical recipes in `generals/training/configs/`
+- `competition/` — competition protocol, matchup runner, and agents (including `my_bot`, the entry)
+- `runs/` — committed records of training/benchmark runs ([index](runs/README.md)); checkpoints stay out of git (Hugging Face + local `checkpoints/`)
+- `tools/dashboard/` — metrics-dashboard generator used during runs
+- `tests/training/` — trainer unit + equivalence tests
