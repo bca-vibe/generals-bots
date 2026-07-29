@@ -27,6 +27,10 @@ class TrainingConfig:
     max_grid_size: int = 21
     truncation: int = 1200
     deathtouch_turn: int = 800
+    # These are the official generator's pre-strip settings. It samples 9-11
+    # mountain cells as temporary neutral castles, then build-castles mode
+    # strips them to plains. The played maps consequently land in the published
+    # approximate 19-23% / 65-105 final mountain range.
     mountain_density_min: float = 0.24
     mountain_density_max: float = 0.26
     pool_size: int = 200_000
@@ -83,7 +87,7 @@ class TrainingConfig:
             CurriculumStage(4, 8),
             CurriculumStage(6, 13),
             CurriculumStage(11, 17),
-            CurriculumStage(14, None),
+            CurriculumStage(17, None),
         )
     )
 
@@ -123,3 +127,5 @@ class TrainingConfig:
             )
         if not self.curriculum:
             raise ValueError("At least one curriculum stage is required")
+        if not 0 <= self.mountain_density_min <= self.mountain_density_max <= 1:
+            raise ValueError("Mountain-density bounds must satisfy 0 <= min <= max <= 1")

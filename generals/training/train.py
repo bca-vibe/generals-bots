@@ -37,6 +37,9 @@ def make_environment(
             config.mountain_density_min,
             config.mountain_density_max,
         ),
+        # Match the official generator exactly: it first converts 9-11 sampled
+        # mountains to neutral castles, then build_castles strips those castles
+        # to plain ground before play begins.
         num_castles_range=(9, 11),
         min_generals_distance=stage.min_generals_distance,
         max_generals_distance=stage.max_generals_distance,

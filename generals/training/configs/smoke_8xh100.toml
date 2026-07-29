@@ -75,5 +75,5 @@ max_generals_distance = 17
 advance_win_rate = 0.60
 
 [[training.curriculum]]
-min_generals_distance = 14
+min_generals_distance = 17
 advance_win_rate = 0.60

@@ -9,6 +9,7 @@ move, and deathtouch never fires. These tests pin the composition.
 import sys
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -98,6 +99,54 @@ def test_plain_env_transition_is_the_base_game():
     assert jnp.array_equal(got.ownership, want.ownership)
 
 
+def test_training_env_transition_matches_competition_runner_exactly():
+    """The PPO rollout path and stdio match runner must resolve identical turns.
+
+    This covers the three rule-sensitive action patterns in one parity test:
+    simultaneous contested movement, castle construction, and deathtouch.
+    """
+    env = GeneralsEnv(mode="competition", pool_size=1)
+    transition = matchup.make_transition(env)
+
+    contested = give(open_board(time=120), 0, (2, 1), 25)
+    contested = give(contested, 1, (2, 3), 40)
+    contested = contested._replace(armies=contested.armies.at[2, 2].set(20))
+    build_state = give(open_board(time=200), 0, (5, 5), 60)
+    touch_state = give(open_board(time=801), 0, (0, 6), 3)
+    touch_state = touch_state._replace(armies=touch_state.armies.at[0, 7].set(500))
+
+    cases = [
+        (
+            contested,
+            jnp.stack([
+                jnp.array([0, 2, 1, 3, 0], dtype=jnp.int32),
+                jnp.array([0, 2, 3, 2, 0], dtype=jnp.int32),
+            ]),
+        ),
+        (
+            build_state,
+            jnp.stack([jnp.array([2, 5, 5, 0, 0], dtype=jnp.int32), PASS]),
+        ),
+        (
+            touch_state,
+            jnp.stack([jnp.array([0, 0, 6, 3, 0], dtype=jnp.int32), PASS]),
+        ),
+    ]
+
+    for state, actions in cases:
+        reference_state, reference_info = transition(state, actions)
+        pool = jax.tree.map(lambda value: value[None], state)
+        timestep, _ = env.step(state, actions, pool)
+
+        # env.step increments pool_idx when it auto-resets after a terminal
+        # turn; the played game state itself must otherwise be bit-identical.
+        training_state = timestep.last_state._replace(pool_idx=reference_state.pool_idx)
+        for reference_field, training_field in zip(reference_state, training_state):
+            assert jnp.array_equal(reference_field, training_field)
+        for reference_field, training_field in zip(reference_info, timestep.info):
+            assert jnp.array_equal(reference_field, training_field)
+
+
 @pytest.mark.parametrize("seed", [0, 1, 7])
 def test_competition_boards_are_rectangular_and_castle_free(seed):
     """The runner must draw the boards the evaluator plays: exact rectangles in
@@ -110,3 +159,17 @@ def test_competition_boards_are_rectangular_and_castle_free(seed):
     assert env.min_grid_size <= w <= env.max_grid_size
     assert int(state.castles.sum()) == 0, "neutral castles were not stripped"
     assert int(state.generals.sum()) == 2
+
+    # The reference generator samples temporary castles out of mountain cells,
+    # then strips those castles to plains. The final played board is therefore
+    # castle-free and stays inside the published absolute mountain bounds.
+    mountain_count = int(state.mountains.sum())
+    assert 65 <= mountain_count <= 105
+    assert 0.19 <= mountain_count / (h * w) <= 0.24
+
+
+def test_competition_generator_matches_reference_pre_strip_parameters():
+    env = GeneralsEnv(mode="competition")
+    assert env.num_castles_range == (9, 11)
+    assert env.mountain_density_range == (0.24, 0.26)
+    assert env.min_generals_distance == 17
