@@ -1,0 +1,79 @@
+[training]
+run_name = "smoke_8xh100"
+seed = 44
+output_dir = "checkpoints"
+
+pad_to = 21
+min_grid_size = 18
+max_grid_size = 21
+truncation = 1200
+deathtouch_turn = 800
+mountain_density_min = 0.24
+mountain_density_max = 0.26
+pool_size = 200000
+reset_pool_every = 20
+
+history_size = 7
+temporal_window = 512
+depth = 7
+embed_dim = 448
+attention_heads = 8
+ff_factor = 3
+patch_size = 3
+use_bf16 = true
+value_bins = 128
+value_min = -1.0
+value_max = 1.0
+hl_gauss_sigma = 0.04
+
+num_envs = 512
+num_steps = 512
+num_iterations = 100000
+minibatch_size = 1024
+ppo_epochs = 1
+
+gamma = 1.0
+gae_lambda = 0.90
+clip_epsilon = 0.20
+value_coefficient = 0.50
+max_grad_norm = 0.267
+target_kl = 0.02
+advantage_top_fraction = 0.25
+
+learning_rate_numerator = 0.5
+learning_rate_exponent = 1.1
+learning_rate_min = 0.000005
+learning_rate_max = 0.0001
+entropy_start = 0.05
+entropy_power = 0.2
+entropy_min = 0.001
+
+ema_decay = 0.999
+eval_every = 25
+eval_games = 512
+checkpoint_every = 20
+metrics_every = 1
+
+[[training.curriculum]]
+min_generals_distance = 2
+max_generals_distance = 6
+advance_win_rate = 0.60
+
+[[training.curriculum]]
+min_generals_distance = 4
+max_generals_distance = 8
+advance_win_rate = 0.60
+
+[[training.curriculum]]
+min_generals_distance = 6
+max_generals_distance = 13
+advance_win_rate = 0.60
+
+[[training.curriculum]]
+min_generals_distance = 11
+max_generals_distance = 17
+advance_win_rate = 0.60
+
+[[training.curriculum]]
+min_generals_distance = 14
+advance_win_rate = 0.60
