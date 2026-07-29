@@ -1,5 +1,13 @@
 # Run: smoke_8xh100 (pre-train, leg 1)
 
+> **Generator provenance note (2026-07-29):** this entire run used the
+> pre-fix map generator, which did not match the latest generator on the
+> competition repo. The mismatch was fixed after the run (engine + config
+> changes, see repo history after commit a1cf598). The run remains valid as a
+> base checkpoint — training was still in the early curriculum — but all
+> branch runs will use the corrected generator, so metrics/evals are not
+> directly comparable across that boundary.
+
 Base-model pre-train on a givemeanode 8×H100 node (`generals-smoke`), started as a
 smoke test and promoted to the official pre-train. Target ~36 GPU-hours total:
 2 h leg 1 + 2.5 h leg 2 (resumed from `latest.eqx`), then branch runs.
