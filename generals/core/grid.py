@@ -222,7 +222,10 @@ def generate_grid(
             grid,
             ((0, pad_h), (0, pad_w)),
             mode='constant',
-            constant_values=-2,  # Mountains
+            # Distinguish out-of-board padding from generated mountains. Both
+            # are impassable; the distinction represents public board-size
+            # information available to competition agents at handshake time.
+            constant_values=-3,
         )
     
     # Grid is always valid by construction

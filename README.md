@@ -182,6 +182,15 @@ autopilot(agent, user_id="your_user_id", lobby_id="your_lobby")
 
 Register at [generals.io](https://generals.io) to get your user ID.
 
+## 🧠 Competition baseline training
+
+The repository includes a data-parallel PPO implementation of the 7-layer
+AverageJoe-style competition baseline. It uses the canonical build/pass action
+space, deterministic fog-of-war memory, HL-Gauss value prediction, EMA weights,
+and a general-distance curriculum while preserving the complete competition
+ruleset. See [`generals/training/README.md`](generals/training/README.md) for the
+architecture, configuration, launch, resume, and evaluation details.
+
 ## 📄 Citation
 
 ```bibtex

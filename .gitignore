@@ -175,4 +175,8 @@ competition/agents/*/target/
 
 # local research artifacts
 figures/
+checkpoints/
 uv.lock
+
+# macOS
+.DS_Store

@@ -120,9 +120,11 @@ class JaxGameAdapter:
                 castles=jnp.array(self.channels.castles),
                 mountains=jnp.array(self.channels.mountains),
                 passable=jnp.array(np.logical_not(self.channels.mountains)),
+                board_mask=jnp.ones_like(jnp.array(self.channels.mountains), dtype=jnp.bool_),
                 general_positions=jnp.array([self.general_positions[agent] for agent in self.agents]),
                 time=jnp.int32(self.time),
                 winner=jnp.int32(-1),
+                pool_idx=jnp.int32(0),
             )
             self._info = game.get_info(state)
 

@@ -43,6 +43,7 @@ class GameState(NamedTuple):
         castles: (H, W) boolean mask of castle positions.
         mountains: (H, W) boolean mask of mountain positions.
         passable: (H, W) boolean mask of passable cells (not mountains).
+        board_mask: (H, W) boolean mask of cells inside the true rectangular board.
         general_positions: (2, 2) array of [row, col] for each general.
         time: Scalar, current game timestep.
         winner: Scalar, -1 if game ongoing, 0 or 1 if that player won.
@@ -56,6 +57,7 @@ class GameState(NamedTuple):
     castles: jnp.ndarray
     mountains: jnp.ndarray
     passable: jnp.ndarray
+    board_mask: jnp.ndarray
     general_positions: jnp.ndarray
     time: jnp.ndarray
     winner: jnp.ndarray
@@ -111,8 +113,12 @@ def create_initial_state(grid: jnp.ndarray) -> GameState:
     is_general_1 = grid == 2
     generals = is_general_0 | is_general_1
 
-    mountains = grid == -2
-    passable = grid != -2
+    # -3 is reserved for batch padding. Padding behaves as a mountain in the
+    # simulator but remains distinguishable so training can use the board
+    # dimensions that the competition protocol reveals in its handshake.
+    board_mask = grid != -3
+    mountains = grid < 0
+    passable = board_mask & ~mountains
     castles = grid > 2
 
     ownership = jnp.stack([is_general_0, is_general_1])
@@ -133,6 +139,7 @@ def create_initial_state(grid: jnp.ndarray) -> GameState:
         castles=castles,
         mountains=mountains,
         passable=passable,
+        board_mask=board_mask,
         general_positions=general_positions,
         time=jnp.int32(0),
         winner=jnp.int32(-1),
