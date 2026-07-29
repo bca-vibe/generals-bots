@@ -21,6 +21,19 @@ with open(metrics_path) as f:
         else:
             eval_rows.append(rec)
 
+# A resume from an earlier checkpoint re-runs and re-appends the iterations
+# after the resume point (e.g. leg 2 resumed from 540 while rows 541-557 from
+# leg 1 were already on disk). File order is chronological, so for duplicate
+# iteration numbers the LAST row is the surviving history — keep only it.
+def dedupe_last(rows):
+    by_iter = {}
+    for r in rows:
+        by_iter[int(r["iteration"])] = r
+    return [by_iter[k] for k in sorted(by_iter)]
+
+train_rows = dedupe_last(train_rows)
+eval_rows = dedupe_last(eval_rows)
+
 now = datetime.datetime.now().strftime("%H:%M %Z").strip()
 today = datetime.date.today().isoformat()
 
@@ -132,7 +145,7 @@ page = """<title>smoke_8xh100 live training</title>
 <script>
 const DATA = __PAYLOAD__;
 const T = DATA.train;
-const fmt = (v, d=3) => v == null ? "\u2013" : (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString("en-US") : v.toFixed(d));
+const fmt = (v, d=3) => v == null ? "\\u2013" : (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString("en-US") : v.toFixed(d));
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 document.getElementById("updated").textContent = "updated " + DATA.updated;
@@ -141,26 +154,43 @@ chip.textContent = DATA.status;
 chip.className = "chip " + (DATA.status === "Running" ? "running" : "done");
 
 const last = T[T.length - 1] || {};
+// leg 1 ran 2h (7200s budget, ended iter 557); leg 2 resumed from iter 540
+// with its own process-relative wall clock and a 2.5h (9000s) budget.
+const inLeg2 = (last.iteration ?? 0) > 557 || (last.iteration > 540 && last.wall_seconds < 7000 && T.some(r => r.iteration === 1));
+const legBudget = inLeg2 ? 9000 : 7200;
+const legName = inLeg2 ? "2.5h leg-2 budget" : "2h leg-1 budget";
 const elapsed = last.wall_seconds || 0;
-document.getElementById("pbar").style.width = Math.min(100, elapsed / 7200 * 100).toFixed(1) + "%";
+document.getElementById("pbar").style.width = Math.min(100, elapsed / legBudget * 100).toFixed(1) + "%";
 
 const hours = Math.floor(elapsed / 3600), mins = Math.round((elapsed % 3600) / 60);
 const tiles = [
-  ["Iteration", String(last.iteration ?? "\u2013"), "of ~" + Math.round(7200 / 10.6) + " expected"],
+  ["Iteration", String(last.iteration ?? "\\u2013"), inLeg2 ? "leg 2 (resumed from 540)" : "of ~" + Math.round(legBudget / 10.6) + " expected"],
   ["Samples / sec", fmt(last.samples_per_second, 0), "across 8 GPUs"],
   ["Explained variance", fmt(last.explained_variance, 3), "value-net quality"],
   ["Entropy", fmt(last.entropy, 3), "coef " + fmt(last.entropy_coefficient, 4)],
-  ["Elapsed", hours + "h " + String(mins).padStart(2, "0") + "m", "of 2h budget \u00b7 stage " + (last.stage ?? 0)],
+  ["Elapsed", hours + "h " + String(mins).padStart(2, "0") + "m", "of " + legName + " \\u00b7 stage " + (last.stage ?? 0)],
 ];
 document.getElementById("tiles").innerHTML = tiles.map(([l, v, d]) =>
   `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="delta">${d}</div></div>`).join("");
 
 const S = { s1: css("--s1"), s2: css("--s2"), s3: css("--s3") };
+const E = DATA.evals;
+// iterations where the curriculum stage advanced (skip the initial stage)
+const STAGES = [];
+{ let prev = null;
+  for (const r of T) { if (prev !== null && r.stage !== prev) STAGES.push({ iter: r.iteration, stage: r.stage }); prev = r.stage; } }
+const egames = e => Math.max(1, (e["evaluation/wins"] ?? 0) + (e["evaluation/losses"] ?? 0) + (e["evaluation/draws"] ?? 0));
 const CHARTS = [
+  { title: "Eval score vs random", desc: "EMA net, 512 paired games every 25 iters", data: "evals",
+    series: [{ k: e => e["evaluation/score"], c: "s1", name: "score" }], ymin: 0, ymax: 1 },
+  { title: "Eval outcomes vs random", desc: "share of eval games", data: "evals", legend: true, series: [
+      { k: e => e["evaluation/wins"] / egames(e), c: "s1", name: "Wins" },
+      { k: e => e["evaluation/losses"] / egames(e), c: "s2", name: "Losses" },
+      { k: e => e["evaluation/draws"] / egames(e), c: "s3", name: "Draws" }], ymin: 0, ymax: 1 },
   { title: "Total loss", desc: "policy + value + entropy terms", series: [{ k: r => r.loss, c: "s1", name: "loss" }] },
   { title: "Explained variance", desc: "1 = value net fully explains returns", series: [{ k: r => r.explained_variance, c: "s1", name: "explained variance" }], ymin: 0, ymax: 1 },
   { title: "Entropy", desc: "policy exploration (nats)", series: [{ k: r => r.entropy, c: "s1", name: "entropy" }] },
-  { title: "Approx KL", desc: "per-update policy shift · target 0.02", series: [{ k: r => r.approximate_kl, c: "s1", name: "KL" }], refline: 0.02 },
+  { title: "Approx KL", desc: "per-update policy shift \\u00b7 target 0.02", series: [{ k: r => r.approximate_kl, c: "s1", name: "KL" }], refline: 0.02 },
   { title: "Value loss", desc: "HL-Gauss cross-entropy", series: [{ k: r => r.value_loss, c: "s1", name: "value loss" }] },
   { title: "Clip fraction", desc: "share of clipped policy updates", series: [{ k: r => r.clip_fraction, c: "s1", name: "clip fraction" }] },
   { title: "Episode outcomes", desc: "share of episodes per iteration", legend: true, series: [
@@ -179,8 +209,10 @@ function niceTicks(lo, hi, n) {
 }
 const chartsEl = document.getElementById("charts");
 for (const cfg of CHARTS) {
-  const xs = T.map(r => r.iteration);
-  const all = cfg.series.flatMap(s => T.map(s.k)).filter(v => v != null && isFinite(v));
+  const R = cfg.data === "evals" ? E : T;
+  if (!R.length) continue;
+  const xs = R.map(r => r.iteration);
+  const all = cfg.series.flatMap(s => R.map(s.k)).filter(v => v != null && isFinite(v));
   if (!all.length) continue;
   let lo = cfg.ymin ?? Math.min(...all), hi = cfg.ymax ?? Math.max(...all);
   if (cfg.refline != null) { lo = Math.min(lo, cfg.refline); hi = Math.max(hi, cfg.refline); }
@@ -196,8 +228,14 @@ for (const cfg of CHARTS) {
   for (const tv of xticks) g += `<text x="${x(tv)}" y="${H - 5}" text-anchor="middle" font-size="10" fill="var(--muted)" style="font-variant-numeric:tabular-nums">${tv}</text>`;
   g += `<line x1="${M.l}" x2="${W - M.r}" y1="${y(lo)}" y2="${y(lo)}" stroke="var(--baseline)" stroke-width="1"/>`;
   if (cfg.refline != null) g += `<line x1="${M.l}" x2="${W - M.r}" y1="${y(cfg.refline)}" y2="${y(cfg.refline)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>`;
+  for (const sb of STAGES) {
+    if (sb.iter < xs[0] || sb.iter > xs[xs.length - 1]) continue;
+    const sx = x(sb.iter);
+    g += `<line x1="${sx}" x2="${sx}" y1="${M.t}" y2="${H - M.b}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>` +
+         `<text x="${sx + 3}" y="${M.t + 8}" font-size="9" fill="var(--muted)">S${sb.stage}</text>`;
+  }
   for (const s of cfg.series) {
-    const pts = T.filter(r => { const v = s.k(r); return v != null && isFinite(v); })
+    const pts = R.filter(r => { const v = s.k(r); return v != null && isFinite(v); })
                  .map(r => [x(r.iteration), y(s.k(r))]);
     if (!pts.length) continue;
     const path = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join("");
@@ -217,8 +255,8 @@ for (const cfg of CHARTS) {
     const rect = svg.getBoundingClientRect();
     const px = (e.clientX - rect.left) / rect.width * W;
     let best = 0, bd = Infinity;
-    T.forEach((r, i) => { const d = Math.abs(x(r.iteration) - px); if (d < bd) { bd = d; best = i; } });
-    const r = T[best], cx = x(r.iteration);
+    R.forEach((r, i) => { const d = Math.abs(x(r.iteration) - px); if (d < bd) { bd = d; best = i; } });
+    const r = R[best], cx = x(r.iteration);
     xhair.setAttribute("x1", cx); xhair.setAttribute("x2", cx); xhair.setAttribute("visibility", "visible");
     tip.style.display = "block";
     tip.innerHTML = `<span class="t-it">iter ${r.iteration}</span><br>` +
