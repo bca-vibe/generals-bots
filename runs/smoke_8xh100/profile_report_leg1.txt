@@ -1,0 +1,77 @@
+=== TOP CUMULATIVE ===
+Wed Jul 29 04:04:00 2026    /home/dev/profile_tmp.pstats
+
+         38825690 function calls (38102881 primitive calls) in 579.168 seconds
+
+   Ordered by: cumulative time
+   List reduced from 8741 to 30 due to restriction <30>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+   1677/1    0.075    0.000  579.441  579.441 {built-in method builtins.exec}
+        1    0.000    0.000  579.441  579.441 <string>:1(<module>)
+        1    0.000    0.000  579.441  579.441 <frozen runpy>:201(run_module)
+        1    0.000    0.000  573.358  573.358 <frozen runpy>:65(_run_code)
+        1    0.000    0.000  573.358  573.358 /home/dev/generals-bots/generals/training/train.py:1(<module>)
+        1    0.070    0.070  573.301  573.301 /home/dev/generals-bots/generals/training/train.py:546(main)
+        1    0.448    0.448  573.229  573.229 /home/dev/generals-bots/generals/training/train.py:140(train)
+38137/973    0.056    0.000  460.080    0.473 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/traceback_util.py:191(reraise_with_filtered_traceback)
+35908/2008    0.162    0.000  459.061    0.229 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:250(cache_miss)
+10440/8170    0.167    0.000  451.939    0.055 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/profiler.py:417(wrapper)
+35908/19003    0.190    0.000  451.141    0.024 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:130(_run_python_pjit)
+  439/411    0.018    0.000  440.388    1.072 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:1137(_pjit_call_impl_python)
+      439    0.009    0.000  384.438    0.876 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:1209(compile)
+      439    0.056    0.000  384.429    0.876 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:1686(from_hlo)
+      439    0.016    0.000  384.059    0.875 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:1499(_cached_compilation)
+      439    0.017    0.000  383.843    0.874 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/compiler.py:387(compile_or_get_cached)
+      439    0.009    0.000  382.944    0.872 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/compiler.py:727(_compile_and_write_cache)
+      439  382.904    0.872  382.905    0.872 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/compiler.py:292(backend_compile_and_load)
+155483/32471    1.231    0.000  324.802    0.010 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/core.py:660(bind)
+156358/54867    0.377    0.000  320.522    0.006 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/core.py:709(bind_with_trace)
+13309/13297    0.122    0.000  308.277    0.023 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/core.py:1285(process_primitive)
+        2    0.002    0.001  302.541  151.271 /home/dev/generals-bots/generals/core/env.py:201(reset)
+       34    0.012    0.000  294.161    8.652 /home/dev/generals-bots/generals/core/env.py:185(_make_single_state_fixed)
+ 3382/202    0.011    0.000  291.943    1.445 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/linear_util.py:210(call_wrapped)
+   596/70    0.019    0.000  288.779    4.125 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/api.py:1146(vmap_f)
+   596/70    0.011    0.000  288.632    4.123 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/batching.py:336(_batch_outer)
+   596/70    0.020    0.000  288.624    4.123 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/batching.py:344(_batch_inner)
+   596/70    0.003    0.000  287.205    4.103 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/batching.py:118(flatten_fun_for_vmap)
+37523/8808    0.378    0.000  283.675    0.032 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/batching.py:255(process_primitive)
+       32    0.000    0.000  281.860    8.808 /home/dev/generals-bots/generals/core/env.py:235(<lambda>)
+
+
+=== TOP SELF TIME ===
+Wed Jul 29 04:04:00 2026    /home/dev/profile_tmp.pstats
+
+         38825690 function calls (38102881 primitive calls) in 579.168 seconds
+
+   Ordered by: internal time
+   List reduced from 8741 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+      439  382.904    0.872  382.905    0.872 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/compiler.py:292(backend_compile_and_load)
+       61   86.529    1.419  207.286    3.398 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/pmap.py:315(wrapped)
+  439/411   24.314    0.055   33.675    0.082 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:374(__call__)
+    11259   11.303    0.001   34.771    0.003 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/dispatch.py:81(apply_primitive)
+     6234    9.199    0.001    9.724    0.002 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:221(batched_device_put)
+    29745    5.668    0.000   21.767    0.001 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/numpy/ufunc_api.py:175(__call__)
+      741    3.261    0.004    3.288    0.004 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/array.py:615(_value)
+        1    2.631    2.631    2.640    2.640 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax_plugins/xla_cuda12/__init__.py:148(_check_cuda_versions)
+      439    2.391    0.005    2.794    0.006 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py:623(make_ir_context)
+        1    1.756    1.756    1.756    1.756 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jaxlib/xla_client.py:137(make_c_api_client)
+       24    1.442    0.060    1.497    0.062 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/api.py:2479(block_until_ready)
+155483/32471    1.231    0.000  324.802    0.010 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/core.py:660(bind)
+6783838/6645657    1.222    0.000    1.325    0.000 {built-in method builtins.isinstance}
+719187/718283    0.838    0.000    4.496    0.000 {jaxlib.utils.safe_map}
+    69804    0.833    0.000    3.189    0.000 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/partial_eval.py:1931(default_process_primitive)
+ 3339/439    0.810    0.000   12.102    0.028 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py:2075(jaxpr_subcomp)
+     3003    0.790    0.000    9.858    0.003 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/array.py:1153(shard_device_array)
+      439    0.684    0.002   16.719    0.038 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py:1287(lower_jaxpr_to_module)
+266661/266008    0.681    0.000    1.024    0.000 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/util.py:270(wrapper)
+     1676    0.621    0.000  270.451    0.161 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:1207(_pjit_call_impl)
+   658893    0.600    0.000    1.342    0.000 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/core.py:1924(typeof)
+   110655    0.558    0.000    1.243    0.000 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/core.py:2422(__new__)
+   103504    0.554    0.000    1.560    0.000 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/partial_eval.py:1844(make_eqn)
+      537    0.498    0.001    0.502    0.001 {method 'tofile' of 'numpy.ndarray' objects}
+    85126    0.477    0.000    0.528    0.000 /home/dev/generals-bots/.venv/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py:2245(_emit_cached_call)
+
+
