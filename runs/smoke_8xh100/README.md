@@ -15,10 +15,9 @@ smoke test and promoted to the official pre-train. Target ~36 GPU-hours total:
 
 ## Files
 
-- `metrics_leg1_merged.jsonl` — per-iteration metrics. Rows through iter 354 are
-  the trainer's own JSONL; rows 355–557 are reconstructed from shipped stdout
-  (`synthesized_from_stdout: true`, fewer fields, `wall_seconds` extrapolated).
-  The authoritative full JSONL lives on the node and replaces this after leg 2.
+- `metrics_leg1.jsonl` — the trainer's own full JSONL for leg 1 (authoritative,
+  exported from the node; supersedes `metrics_leg1_merged.jsonl`, kept for
+  provenance).
 - `train_stdout_leg1.log` — full stdout via the provider's log service.
 - `smoke_8xh100.toml` — the run config (copy of what the node ran).
 - `dashboard.html` + `build_dashboard.py` + `merge_logs.py` — the live-metrics
