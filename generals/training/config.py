@@ -80,6 +80,9 @@ class TrainingConfig:
     eval_games: int = 512
     checkpoint_every: int = 500
     metrics_every: int = 1
+    # Insert device barriers to time rollout/update phases separately. Costs
+    # throughput (serializes host glue with device work) - profiling runs only.
+    debug_timing: bool = False
 
     curriculum: tuple[CurriculumStage, ...] = field(
         default_factory=lambda: (

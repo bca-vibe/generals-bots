@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import asdict
 from functools import partial
@@ -12,6 +13,7 @@ from pathlib import Path
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 
 from generals.core.env import GeneralsEnv
@@ -98,6 +100,19 @@ def _learning_rate(config: TrainingConfig, optimizer_step):
     return jnp.clip(raw, config.learning_rate_min, config.learning_rate_max)
 
 
+def _learning_rate_float(config: TrainingConfig, optimizer_step: int) -> float:
+    """Same schedule as _learning_rate, in plain Python for logging."""
+    kept_samples = int(
+        2 * config.num_envs * config.num_steps * config.advantage_top_fraction
+    )
+    optimizer_steps_per_iteration = (
+        config.ppo_epochs * kept_samples // config.minibatch_size
+    )
+    iteration = optimizer_step / optimizer_steps_per_iteration + 1.0
+    raw = config.learning_rate_numerator / iteration**config.learning_rate_exponent
+    return min(max(raw, config.learning_rate_min), config.learning_rate_max)
+
+
 def _entropy_coefficient(config: TrainingConfig, iteration: int) -> float:
     return max(
         config.entropy_start / (iteration + 1) ** config.entropy_power,
@@ -138,6 +153,118 @@ def _make_evaluator(environment, n_maps: int, truncation: int):
             environment, pool, network, key, n_maps, truncation
         )
     )
+
+
+def make_prepare_batch(config: TrainingConfig):
+    """GAE -> returns -> normalization -> top-k selection -> prep metrics,
+    fused into one compiled dispatch (was five dispatches plus eager glue)."""
+    kept_samples = int(
+        2 * config.num_envs * config.num_steps * config.advantage_top_fraction
+    )
+
+    @partial(jax.pmap, axis_name="devices")
+    def prepare_batch(rewards, values, next_values, terminated, truncated, winners):
+        advantages = compute_gae(
+            rewards,
+            values,
+            next_values,
+            terminated,
+            truncated,
+            config.gamma,
+            config.gae_lambda,
+        )
+        returns = advantages + values
+
+        mean = jax.lax.pmean(advantages.mean(), axis_name="devices")
+        mean_square = jax.lax.pmean((advantages**2).mean(), axis_name="devices")
+        raw_std = jnp.sqrt(jnp.maximum(mean_square - mean**2, 0.0))
+        normalized = (advantages - mean) / (raw_std + 1e-8)
+        _, indices = jax.lax.top_k(jnp.abs(normalized.reshape(-1)), kept_samples)
+
+        # Episode outcome counts for player-0 seats, summed across devices;
+        # shards are equal-sized so pmean of per-shard moments equals the
+        # global moments the host loop previously computed eagerly.
+        done = terminated | truncated
+        p0_done = done[:, : config.num_envs]
+        p0_terminated = terminated[:, : config.num_envs]
+        p0_winners = winners[:, : config.num_envs]
+        episodes = jax.lax.psum(p0_done.sum(), axis_name="devices")
+        wins = jax.lax.psum(
+            jnp.sum(p0_terminated & (p0_winners == 0)), axis_name="devices"
+        )
+        losses = jax.lax.psum(
+            jnp.sum(p0_terminated & (p0_winners == 1)), axis_name="devices"
+        )
+
+        returns_mean = jax.lax.pmean(returns.mean(), axis_name="devices")
+        returns_square = jax.lax.pmean((returns**2).mean(), axis_name="devices")
+        return_variance = returns_square - returns_mean**2
+        residual = returns - values
+        residual_mean = jax.lax.pmean(residual.mean(), axis_name="devices")
+        residual_square = jax.lax.pmean((residual**2).mean(), axis_name="devices")
+        residual_variance = residual_square - residual_mean**2
+        explained_variance = 1.0 - residual_variance / jnp.maximum(
+            return_variance, 1e-8
+        )
+
+        prep_metrics = {
+            "raw_advantage_std": raw_std,
+            "mean_reward": jax.lax.pmean(rewards.mean(), axis_name="devices"),
+            "episodes": episodes,
+            "wins": wins,
+            "losses": losses,
+            "explained_variance": explained_variance,
+        }
+        return normalized, returns, indices, prep_metrics
+
+    return prepare_batch
+
+
+def make_ema_step(config: TrainingConfig):
+    """One compiled dispatch updating the replicated EMA tree in place of
+    eager per-leaf host operations."""
+
+    @jax.pmap
+    def ema_step(ema, current):
+        return jax.tree.map(
+            lambda e, c: config.ema_decay * e + (1.0 - config.ema_decay) * c,
+            ema,
+            current,
+        )
+
+    return ema_step
+
+
+def make_update_shard(config: TrainingConfig, static, optimizer):
+    @partial(jax.pmap, axis_name="devices")
+    def update_shard(params, opt_state, batch, indices, rng, entropy_coefficient):
+        # Split on-device (was an eager vmap over device keys per epoch);
+        # keys[0]/keys[1] match the previous split_keys[:, 0]/[:, 1] exactly.
+        keys = jax.random.split(rng)
+        next_rng, update_rng = keys[0], keys[1]
+        shard_network = eqx.combine(params, static)
+        shard_network, opt_state, metrics = ppo_epoch(
+            shard_network,
+            opt_state,
+            batch,
+            indices,
+            optimizer,
+            update_rng,
+            minibatch_size=config.minibatch_size,
+            clip_epsilon=config.clip_epsilon,
+            value_coefficient=config.value_coefficient,
+            entropy_coefficient=entropy_coefficient,
+            value_bins=config.value_bins,
+            value_min=config.value_min,
+            value_max=config.value_max,
+            hl_gauss_sigma=config.hl_gauss_sigma,
+            axis_name="devices",
+        )
+        params, _ = eqx.partition(shard_network, eqx.is_inexact_array)
+        metrics = jax.lax.pmean(metrics, axis_name="devices")
+        return params, opt_state, next_rng, metrics
+
+    return update_shard
 
 
 def train(config: TrainingConfig, *, resume: str | None = None):
@@ -216,7 +343,11 @@ def train(config: TrainingConfig, *, resume: str | None = None):
     parameters, static = eqx.partition(network, eqx.is_inexact_array)
     parameters = _replicate_for_pmap(parameters)
     optimizer_state = _replicate_for_pmap(optimizer_state)
+    # EMA lives replicated on-device so its update is one compiled dispatch
+    # per iteration instead of eager per-leaf ops. Checkpoints still store the
+    # unreplicated tree (shard 0 is sliced at save; replicated again on load).
     ema_parameters, _ = eqx.partition(ema_network, eqx.is_inexact_array)
+    ema_parameters = _replicate_for_pmap(ema_parameters)
 
     def sample_initial_states(pool_shard, rng):
         indices = jax.random.randint(
@@ -251,57 +382,14 @@ def train(config: TrainingConfig, *, resume: str | None = None):
 
     rollout_pmapped = jax.pmap(rollout_shard)
 
-    gae_pmapped = jax.pmap(
-        lambda rewards, values, next_values, terminated, truncated: compute_gae(
-            rewards,
-            values,
-            next_values,
-            terminated,
-            truncated,
-            config.gamma,
-            config.gae_lambda,
-        )
+    kept_samples = int(
+        2 * config.num_envs * config.num_steps * config.advantage_top_fraction
     )
+    prepare_batch = make_prepare_batch(config)
+    ema_step = make_ema_step(config)
+    update_shard = make_update_shard(config, static, optimizer)
 
-    @partial(jax.pmap, axis_name="devices")
-    def normalize_advantages(advantages):
-        mean = jax.lax.pmean(advantages.mean(), axis_name="devices")
-        mean_square = jax.lax.pmean((advantages**2).mean(), axis_name="devices")
-        standard_deviation = jnp.sqrt(jnp.maximum(mean_square - mean**2, 0.0))
-        return (advantages - mean) / (standard_deviation + 1e-8)
-
-    per_device_samples = 2 * config.num_envs * config.num_steps
-    kept_samples = int(per_device_samples * config.advantage_top_fraction)
-
-    @jax.pmap
-    def select_samples(advantages):
-        _, indices = jax.lax.top_k(jnp.abs(advantages.reshape(-1)), kept_samples)
-        return indices
-
-    @partial(jax.pmap, axis_name="devices")
-    def update_shard(params, opt_state, batch, indices, rng, entropy_coefficient):
-        shard_network = eqx.combine(params, static)
-        shard_network, opt_state, metrics = ppo_epoch(
-            shard_network,
-            opt_state,
-            batch,
-            indices,
-            optimizer,
-            rng,
-            minibatch_size=config.minibatch_size,
-            clip_epsilon=config.clip_epsilon,
-            value_coefficient=config.value_coefficient,
-            entropy_coefficient=entropy_coefficient,
-            value_bins=config.value_bins,
-            value_min=config.value_min,
-            value_max=config.value_max,
-            hl_gauss_sigma=config.hl_gauss_sigma,
-            axis_name="devices",
-        )
-        params, _ = eqx.partition(shard_network, eqx.is_inexact_array)
-        metrics = jax.lax.pmean(metrics, axis_name="devices")
-        return params, opt_state, metrics
-
+    device_count = jax.device_count()
     train_started = time.perf_counter()
     for iteration in range(start_iteration, config.num_iterations):
         iteration_started = time.perf_counter()
@@ -314,7 +402,8 @@ def train(config: TrainingConfig, *, resume: str | None = None):
             memory_one,
             pool_replicated,
         )
-        jax.block_until_ready(states)
+        if config.debug_timing:
+            jax.block_until_ready(states)
         rollout_seconds = time.perf_counter() - rollout_started
         (
             observations,
@@ -330,13 +419,9 @@ def train(config: TrainingConfig, *, resume: str | None = None):
             winners,
         ) = rollout
 
-        advantages = gae_pmapped(
-            rewards, values, next_values, terminated, truncated
+        advantages, returns, sample_indices, prep_metrics = prepare_batch(
+            rewards, values, next_values, terminated, truncated, winners
         )
-        returns = advantages + values
-        raw_advantage_std = float(advantages.std())
-        advantages = normalize_advantages(advantages)
-        sample_indices = select_samples(advantages)
         batch = (
             observations,
             histories,
@@ -349,76 +434,69 @@ def train(config: TrainingConfig, *, resume: str | None = None):
 
         update_started = time.perf_counter()
         entropy_coefficient = _entropy_coefficient(config, iteration)
-        entropy_by_device = jnp.full(
-            (jax.device_count(),), entropy_coefficient, dtype=jnp.float32
+        entropy_by_device = np.full(
+            (device_count,), entropy_coefficient, dtype=np.float32
         )
         epochs_used = 0
         metrics = None
         for _ in range(config.ppo_epochs):
-            split_keys = jax.vmap(jax.random.split)(rollout_keys)
-            rollout_keys, update_keys = split_keys[:, 0], split_keys[:, 1]
-            parameters, optimizer_state, metrics = update_shard(
+            parameters, optimizer_state, rollout_keys, metrics = update_shard(
                 parameters,
                 optimizer_state,
                 batch,
                 sample_indices,
-                update_keys,
+                rollout_keys,
                 entropy_by_device,
             )
             epochs_used += 1
-            if float(metrics["approximate_kl"][0]) > config.target_kl:
-                break
-        jax.block_until_ready(parameters)
+            # The KL early stop only matters when there is a next epoch to
+            # skip; reading it at ppo_epochs == 1 would just force a device
+            # sync for nothing.
+            if epochs_used < config.ppo_epochs:
+                if float(metrics["approximate_kl"][0]) > config.target_kl:
+                    break
+        if config.debug_timing:
+            jax.block_until_ready(parameters)
         update_seconds = time.perf_counter() - update_started
 
-        current_parameters = jax.tree.map(lambda value: value[0], parameters)
-        ema_parameters = jax.tree.map(
-            lambda ema, current: config.ema_decay * ema
-            + (1.0 - config.ema_decay) * current,
-            ema_parameters,
-            current_parameters,
-        )
+        ema_parameters = ema_step(ema_parameters, parameters)
 
-        done = terminated | truncated
-        p0_done = done[:, :, : config.num_envs]
-        p0_terminated = terminated[:, :, : config.num_envs]
-        p0_winners = winners[:, :, : config.num_envs]
-        episodes = int(p0_done.sum())
-        wins = int(jnp.sum(p0_terminated & (p0_winners == 0)))
-        losses = int(jnp.sum(p0_terminated & (p0_winners == 1)))
+        # One transfer for everything the host needs this iteration: the
+        # tiny replicated metric arrays come down together and shard 0 is
+        # picked on the host, replacing ~20 individual blocking pulls.
+        host_metrics = jax.device_get({**prep_metrics, **metrics})
+        host_metrics = {name: value[0] for name, value in host_metrics.items()}
+        episodes = int(host_metrics.pop("episodes"))
+        wins = int(host_metrics.pop("wins"))
+        losses = int(host_metrics.pop("losses"))
         draws = episodes - wins - losses
-        return_variance = float(jnp.var(returns))
-        explained_variance = 1.0 - float(jnp.var(returns - values)) / max(
-            return_variance, 1e-8
-        )
+        explained_variance = float(host_metrics.pop("explained_variance"))
+
         iteration_seconds = time.perf_counter() - iteration_started
-        total_samples = (
-            jax.device_count() * 2 * config.num_envs * config.num_steps
-        )
+        total_samples = device_count * 2 * config.num_envs * config.num_steps
         samples_per_second = total_samples / iteration_seconds
-        device_metrics = jax.tree.map(lambda value: float(value[0]), metrics)
-        current_learning_rate = float(_learning_rate(config, iteration * (
-            config.ppo_epochs * kept_samples // config.minibatch_size
-        )))
+        current_learning_rate = _learning_rate_float(
+            config,
+            iteration * (config.ppo_epochs * kept_samples // config.minibatch_size),
+        )
         record = {
             "iteration": iteration + 1,
             "wall_seconds": time.perf_counter() - train_started,
             "stage": stage_index,
             "samples_per_second": samples_per_second,
-            "rollout_seconds": rollout_seconds,
-            "update_seconds": update_seconds,
             "episodes": episodes,
             "wins": wins,
             "losses": losses,
             "draws": draws,
-            "mean_reward": float(rewards.mean()),
             "explained_variance": explained_variance,
-            "raw_advantage_std": raw_advantage_std,
             "learning_rate": current_learning_rate,
             "entropy_coefficient": entropy_coefficient,
             "epochs_used": epochs_used,
-            **device_metrics,
+            **{name: float(value) for name, value in host_metrics.items()},
         }
+        if config.debug_timing:
+            record["rollout_seconds"] = rollout_seconds
+            record["update_seconds"] = update_seconds
 
         if (iteration + 1) % config.metrics_every == 0:
             _write_metrics(metrics_path, record)
@@ -434,7 +512,9 @@ def train(config: TrainingConfig, *, resume: str | None = None):
         )
         if should_evaluate:
             key, evaluation_key = jax.random.split(key)
-            ema_network = eqx.combine(ema_parameters, static)
+            ema_network = eqx.combine(
+                jax.tree.map(lambda value: value[0], ema_parameters), static
+            )
             evaluation, _ = evaluator(evaluation_pool, ema_network, evaluation_key)
             evaluation = jax.tree.map(float, evaluation)
             evaluation_record = {
@@ -488,11 +568,15 @@ def train(config: TrainingConfig, *, resume: str | None = None):
             pool_replicated = _replicate_for_pmap(pool)
 
         if (iteration + 1) % config.checkpoint_every == 0:
-            current_network = eqx.combine(current_parameters, static)
+            current_network = eqx.combine(
+                jax.tree.map(lambda value: value[0], parameters), static
+            )
             current_optimizer_state = jax.tree.map(
                 lambda value: value[0], optimizer_state
             )
-            ema_network = eqx.combine(ema_parameters, static)
+            ema_network = eqx.combine(
+                jax.tree.map(lambda value: value[0], ema_parameters), static
+            )
             checkpoint = run_dir / f"checkpoint_{iteration + 1:06d}.eqx"
             _save_checkpoint(
                 checkpoint,
@@ -522,7 +606,9 @@ def train(config: TrainingConfig, *, resume: str | None = None):
         jax.tree.map(lambda value: value[0], parameters), static
     )
     final_optimizer_state = jax.tree.map(lambda value: value[0], optimizer_state)
-    final_ema_network = eqx.combine(ema_parameters, static)
+    final_ema_network = eqx.combine(
+        jax.tree.map(lambda value: value[0], ema_parameters), static
+    )
     _save_checkpoint(
         run_dir / "final.eqx",
         final_network,
@@ -547,6 +633,14 @@ def parse_args():
 
 
 def main():
+    # Persistent XLA compilation cache: first run on a machine pays compile
+    # once, every later process starts in seconds. Respect an explicit
+    # JAX_COMPILATION_CACHE_DIR; otherwise default to a per-user cache dir.
+    if not os.environ.get("JAX_COMPILATION_CACHE_DIR"):
+        jax.config.update(
+            "jax_compilation_cache_dir",
+            str(Path.home() / ".cache" / "jax_compilation"),
+        )
     args = parse_args()
     config = TrainingConfig.from_toml(args.config)
     train(config, resume=args.resume)
