@@ -22,6 +22,9 @@ train = [
     "equinox>=0.13.0",
     "optax>=0.2.4",
 ]
+tracking = [
+    "wandb>=0.18.0",
+]
 
 [project.scripts]
 generals-train = "generals.training.train:main"

@@ -117,6 +117,32 @@ generals-train \
   --config generals/training/configs/competition_l7.toml
 ```
 
+### Optional Weights & Biases reporting
+
+The local `metrics.jsonl` file remains the canonical metrics record. To mirror
+training, evaluation, configuration, console, and host/GPU telemetry to W&B,
+install the optional tracking dependency and set a project:
+
+```bash
+pip install -e ".[train,tracking]"
+WANDB_PROJECT=generals-bots generals-train \
+  --config generals/training/configs/competition_l7.toml
+```
+
+`WANDB_API_KEY` and `WANDB_ENTITY` use the standard W&B environment variables.
+Set `WANDB_MODE=offline` to record locally for a later `wandb sync`, or
+`WANDB_MODE=disabled` to force tracking off. A recipe can instead set
+`wandb_project`, `wandb_entity`, `wandb_group`, and `wandb_tags` in its
+`[training]` table; environment `WANDB_PROJECT` enables tracking when the
+recipe leaves `wandb_project` unset.
+
+Every process invocation is a separate W&B run. Resumed legs are named with
+their checkpoint iteration and grouped under `wandb_group`, or under
+`run_name` by default. This preserves rollback provenance when a checkpoint is
+older than metrics already emitted by an earlier leg. W&B failures disable the
+remote sink without interrupting training; JSONL logging continues normally.
+Checkpoints are not uploaded to W&B.
+
 Launch the matched convolutional variant with:
 
 ```bash

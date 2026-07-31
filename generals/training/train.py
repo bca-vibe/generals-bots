@@ -26,6 +26,7 @@ from .model import CompetitionTransformer
 from .observation import augment_observation, init_observation_memory
 from .ppo import compute_gae, ppo_epoch
 from .rollout import collect_self_play_rollout
+from .tracking import WandbTracker
 
 
 def make_environment(
@@ -397,6 +398,12 @@ def train(config: TrainingConfig, *, resume: str | None = None):
     trainable = eqx.filter(network, eqx.is_inexact_array)
     parameter_count = sum(value.size for value in jax.tree.leaves(trainable))
     print(f"Array parameters: {parameter_count:,}")
+    tracker = WandbTracker.start(
+        config,
+        start_iteration=start_iteration,
+        resume=resume,
+        device_count=jax.device_count(),
+    )
 
     stage = config.curriculum[stage_index]
     environment = make_environment(config, stage)
@@ -595,6 +602,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
 
         if (iteration + 1) % config.metrics_every == 0:
             _write_metrics(metrics_path, record)
+            tracker.log_training(record)
             print(
                 f"iter {iteration + 1:6d} | loss {record['loss']:.4f} | "
                 f"entropy {record['entropy']:.3f} | KL {record['approximate_kl']:.4f} | "
@@ -617,6 +625,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
                 **{f"evaluation/{name}": value for name, value in evaluation.items()},
             }
             _write_metrics(metrics_path, evaluation_record)
+            tracker.log_evaluation(evaluation_record)
             print(
                 f"  eval EMA: {int(evaluation['wins'])}W/"
                 f"{int(evaluation['losses'])}L/{int(evaluation['draws'])}D, "
@@ -714,6 +723,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
         stage_index,
         key,
     )
+    tracker.finish()
     return final_network, final_optimizer_state, final_ema_network
 
 

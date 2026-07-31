@@ -29,6 +29,12 @@ class TrainingConfig:
     run_name: str = "competition_l7_baseline"
     seed: int = 44
     output_dir: str = "checkpoints"
+    # Optional live experiment tracking. Setting WANDB_PROJECT in the
+    # environment also enables it without changing a checked-in recipe.
+    wandb_project: str | None = None
+    wandb_entity: str | None = None
+    wandb_group: str | None = None
+    wandb_tags: tuple[str, ...] = ()
 
     # The competition rules remain fixed throughout the curriculum.
     pad_to: int = 21
@@ -133,11 +139,19 @@ class TrainingConfig:
             raise ValueError(f"Unknown training config fields: {unknown}")
         if "curriculum" in data:
             data["curriculum"] = tuple(CurriculumStage(**stage) for stage in data["curriculum"])
+        if "wandb_tags" in data:
+            data["wandb_tags"] = tuple(data["wandb_tags"])
         config = cls(**data)
         config.validate()
         return config
 
     def validate(self) -> None:
+        for name in ("wandb_project", "wandb_entity", "wandb_group"):
+            value = getattr(self, name)
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must be non-empty when specified")
+        if any(not tag.strip() for tag in self.wandb_tags):
+            raise ValueError("wandb_tags cannot contain empty values")
         if self.pad_to != 21:
             raise ValueError("The competition baseline is intentionally fixed to pad_to=21")
         if self.observation_schema not in OBSERVATION_SCHEMAS:

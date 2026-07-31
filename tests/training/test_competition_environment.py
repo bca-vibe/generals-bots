@@ -65,6 +65,17 @@ def test_toml_without_schema_defaults_to_legacy(tmp_path):
     assert config.input_channels == 38
 
 
+def test_toml_converts_wandb_tags_to_immutable_tuple(tmp_path):
+    config_path = tmp_path / "tracked.toml"
+    config_path.write_text(
+        '[training]\nwandb_project = "generals-bots"\nwandb_tags = ["conv", "branch"]\n',
+        encoding="utf-8",
+    )
+    config = TrainingConfig.from_toml(config_path)
+    assert config.wandb_project == "generals-bots"
+    assert config.wandb_tags == ("conv", "branch")
+
+
 def test_archived_checkpoint_config_is_explicitly_legacy():
     archived = CONFIG.parents[3] / "runs" / "smoke_8xh100" / "smoke_8xh100.toml"
     config = TrainingConfig.from_toml(archived)

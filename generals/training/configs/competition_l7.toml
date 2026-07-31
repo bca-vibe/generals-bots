@@ -2,6 +2,11 @@
 run_name = "competition_l7_baseline"
 seed = 44
 output_dir = "checkpoints"
+# Optional W&B tracking (or set WANDB_PROJECT without editing this file).
+# wandb_project = "generals-bots"
+# wandb_entity = "your-team"
+# wandb_group = "competition-l7"
+# wandb_tags = ["transformer", "pretrain"]
 
 pad_to = 21
 min_grid_size = 18
