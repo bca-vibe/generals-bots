@@ -6,6 +6,15 @@ import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
+from .observation import (
+    COMPETITION_OBSERVATION_SCHEMA,
+    LEGACY_OBSERVATION_SCHEMA,
+    OBSERVATION_SCHEMAS,
+    observation_channel_count,
+)
+
+MODEL_ARCHITECTURES = frozenset(("transformer", "conv_transformer"))
+
 
 @dataclass(frozen=True)
 class CurriculumStage:
@@ -39,6 +48,10 @@ class TrainingConfig:
     # AverageJoe L_7d architecture.
     history_size: int = 7
     temporal_window: int = 512
+    # Legacy is the safe default for historical TOMLs that predate schema
+    # versioning. New training configs opt into competition_37 explicitly.
+    observation_schema: str = LEGACY_OBSERVATION_SCHEMA
+    model_architecture: str = "transformer"
     depth: int = 7
     embed_dim: int = 448
     attention_heads: int = 8
@@ -49,6 +62,13 @@ class TrainingConfig:
     value_min: float = -1.0
     value_max: float = 1.0
     hl_gauss_sigma: float = 0.04
+    conv_channels: int = 96
+    conv_groups: int = 12
+    # Fresh convolutional runs rescale the branch's output projection once,
+    # using real initial competition observations, so its token correction has
+    # this RMS ratio relative to the ordinary patch-token stream.
+    conv_initial_token_rms_ratio: float = 0.10
+    conv_calibration_samples: int = 512
 
     # Each accelerator runs this many environments. Both player seats become
     # training samples, so samples/iteration/device = 2*num_envs*num_steps.
@@ -98,8 +118,12 @@ class TrainingConfig:
     def run_dir(self) -> Path:
         return Path(self.output_dir) / self.run_name
 
+    @property
+    def input_channels(self) -> int:
+        return observation_channel_count(self.observation_schema, self.history_size)
+
     @classmethod
-    def from_toml(cls, path: str | Path) -> "TrainingConfig":
+    def from_toml(cls, path: str | Path) -> TrainingConfig:
         with Path(path).open("rb") as handle:
             raw = tomllib.load(handle)
         data = raw.get("training", raw)
@@ -116,6 +140,29 @@ class TrainingConfig:
     def validate(self) -> None:
         if self.pad_to != 21:
             raise ValueError("The competition baseline is intentionally fixed to pad_to=21")
+        if self.observation_schema not in OBSERVATION_SCHEMAS:
+            raise ValueError(
+                f"observation_schema must be one of {sorted(OBSERVATION_SCHEMAS)}"
+            )
+        if self.model_architecture not in MODEL_ARCHITECTURES:
+            raise ValueError(
+                f"model_architecture must be one of {sorted(MODEL_ARCHITECTURES)}"
+            )
+        if (
+            self.model_architecture == "conv_transformer"
+            and self.observation_schema != COMPETITION_OBSERVATION_SCHEMA
+        ):
+            raise ValueError("conv_transformer requires observation_schema='competition_37'")
+        if self.conv_channels <= 0 or self.conv_groups <= 0:
+            raise ValueError("conv_channels and conv_groups must be positive")
+        if self.conv_channels % self.conv_groups:
+            raise ValueError("conv_channels must be divisible by conv_groups")
+        if not 0 < self.conv_initial_token_rms_ratio < 1:
+            raise ValueError(
+                "conv_initial_token_rms_ratio must be strictly between zero and one"
+            )
+        if self.conv_calibration_samples <= 0:
+            raise ValueError("conv_calibration_samples must be positive")
         if self.patch_size != 3 or self.pad_to % self.patch_size:
             raise ValueError("pad_to must be divisible by the 3x3 patch size")
         if self.embed_dim % self.attention_heads:

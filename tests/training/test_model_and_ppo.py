@@ -1,21 +1,36 @@
 import jax
 import jax.numpy as jnp
+import pytest
 
 from generals.training.model import CompetitionTransformer
+from generals.training.observation import (
+    COMPETITION_OBSERVATION_SCHEMA,
+    LEGACY_OBSERVATION_SCHEMA,
+)
 from generals.training.ppo import compute_gae
 
 
-def test_model_shapes_and_canonical_pass():
+@pytest.mark.parametrize(
+    ("observation_schema", "input_channels"),
+    [
+        (LEGACY_OBSERVATION_SCHEMA, 38),
+        (COMPETITION_OBSERVATION_SCHEMA, 37),
+    ],
+)
+def test_model_shapes_and_canonical_pass(observation_schema, input_channels):
     model = CompetitionTransformer(
+        input_channels=input_channels,
         depth=1,
         model_dim=32,
         heads=4,
         ff_factor=2,
         value_bins=16,
         use_bf16=False,
+        observation_schema=observation_schema,
         key=jax.random.PRNGKey(0),
     )
-    observation = jnp.zeros((38, 21, 21), dtype=jnp.float32)
+    assert model.patch_embedding.in_features == input_channels * 3 * 3
+    observation = jnp.zeros((input_channels, 21, 21), dtype=jnp.float32)
     history = jnp.zeros((2, 512), dtype=jnp.float32)
     mask = jnp.zeros((3970,), dtype=jnp.bool_).at[-1].set(True)
     action_index, action, value, log_probability, entropy, value_logits = model(

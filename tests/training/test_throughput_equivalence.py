@@ -17,10 +17,15 @@ import pytest
 
 from generals.training.config import TrainingConfig
 from generals.training.model import CompetitionTransformer
+from generals.training.observation import (
+    COMPETITION_OBSERVATION_SCHEMA,
+    LEGACY_OBSERVATION_SCHEMA,
+)
 from generals.training.ppo import compute_gae, ppo_epoch
 from generals.training.train import (
     _learning_rate,
     _learning_rate_float,
+    _load_checkpoint_state,
     _replicate_for_pmap,
     _save_checkpoint,
     make_ema_step,
@@ -251,15 +256,26 @@ def test_update_shard_matches_pre_refactor_update():
         )
 
 
-def test_checkpoint_roundtrip_with_replicated_ema(tmp_path):
-    config = small_config()
+@pytest.mark.parametrize(
+    ("observation_schema", "input_channels"),
+    [
+        (LEGACY_OBSERVATION_SCHEMA, 38),
+        (COMPETITION_OBSERVATION_SCHEMA, 37),
+    ],
+)
+def test_checkpoint_roundtrip_with_replicated_ema(
+    tmp_path, observation_schema, input_channels
+):
+    config = small_config(observation_schema=observation_schema)
     network = CompetitionTransformer(
+        input_channels=input_channels,
         depth=1,
         model_dim=32,
         heads=4,
         ff_factor=2,
         value_bins=config.value_bins,
         use_bf16=False,
+        observation_schema=observation_schema,
         key=jax.random.PRNGKey(3),
     )
     optimizer = optax.chain(
@@ -279,8 +295,8 @@ def test_checkpoint_roundtrip_with_replicated_ema(tmp_path):
     _save_checkpoint(path, network, optimizer_state, ema_network, 7, 1, key)
 
     skeleton = (network, optimizer_state, ema_network, jnp.int32(0), jnp.int32(0), key)
-    loaded_network, _, loaded_ema, iteration, stage, _ = eqx.tree_deserialise_leaves(
-        path, skeleton
+    loaded_network, _, loaded_ema, iteration, stage, _ = _load_checkpoint_state(
+        path, skeleton, config
     )
     assert int(iteration) == 7
     assert int(stage) == 1
@@ -298,6 +314,63 @@ def test_checkpoint_roundtrip_with_replicated_ema(tmp_path):
     re_replicated = _replicate_for_pmap(loaded_ema_params)
     for leaf in jax.tree.leaves(re_replicated):
         assert leaf.shape[0] == DEVICES
+
+
+def test_checkpoint_schema_mismatch_has_clear_error(tmp_path):
+    legacy_config = small_config(observation_schema=LEGACY_OBSERVATION_SCHEMA)
+    legacy_network = CompetitionTransformer(
+        input_channels=38,
+        depth=1,
+        model_dim=32,
+        heads=4,
+        ff_factor=2,
+        value_bins=legacy_config.value_bins,
+        use_bf16=False,
+        observation_schema=LEGACY_OBSERVATION_SCHEMA,
+        key=jax.random.PRNGKey(30),
+    )
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(legacy_config.max_grad_norm),
+        optax.adam(partial(_learning_rate, legacy_config)),
+    )
+    optimizer_state = optimizer.init(eqx.filter(legacy_network, eqx.is_inexact_array))
+    key = jax.random.PRNGKey(31)
+    path = tmp_path / "legacy_checkpoint.eqx"
+    _save_checkpoint(
+        path, legacy_network, optimizer_state, legacy_network, 7, 1, key
+    )
+
+    competition_config = small_config(
+        observation_schema=COMPETITION_OBSERVATION_SCHEMA
+    )
+    competition_network = CompetitionTransformer(
+        input_channels=37,
+        depth=1,
+        model_dim=32,
+        heads=4,
+        ff_factor=2,
+        value_bins=competition_config.value_bins,
+        use_bf16=False,
+        observation_schema=COMPETITION_OBSERVATION_SCHEMA,
+        key=jax.random.PRNGKey(32),
+    )
+    competition_optimizer = optax.chain(
+        optax.clip_by_global_norm(competition_config.max_grad_norm),
+        optax.adam(partial(_learning_rate, competition_config)),
+    )
+    competition_optimizer_state = competition_optimizer.init(
+        eqx.filter(competition_network, eqx.is_inexact_array)
+    )
+    skeleton = (
+        competition_network,
+        competition_optimizer_state,
+        competition_network,
+        jnp.int32(0),
+        jnp.int32(0),
+        key,
+    )
+    with pytest.raises(ValueError, match="legacy checkpoints require legacy_38"):
+        _load_checkpoint_state(path, skeleton, competition_config)
 
 
 @pytest.mark.parametrize("optimizer_step", [0, 128, 4096, 1_000_000])

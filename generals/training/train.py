@@ -17,11 +17,13 @@ import numpy as np
 import optax
 
 from generals.core.env import GeneralsEnv
+from generals.core.game import get_observation
 
 from .config import CurriculumStage, TrainingConfig
+from .conv_model import ConvCompetitionTransformer, calibrate_conv_token_rms
 from .evaluation import evaluate_paired_vs_random
 from .model import CompetitionTransformer
-from .observation import init_observation_memory
+from .observation import augment_observation, init_observation_memory
 from .ppo import compute_gae, ppo_epoch
 from .rollout import collect_self_play_rollout
 
@@ -53,10 +55,12 @@ def make_environment(
     )
 
 
-def build_network(config: TrainingConfig, key) -> CompetitionTransformer:
-    return CompetitionTransformer(
+def build_network(
+    config: TrainingConfig, key
+) -> CompetitionTransformer | ConvCompetitionTransformer:
+    common = dict(
         board_size=config.pad_to,
-        input_channels=24 + 2 * config.history_size,
+        input_channels=config.input_channels,
         history_window=config.temporal_window,
         patch_size=config.patch_size,
         depth=config.depth,
@@ -67,8 +71,18 @@ def build_network(config: TrainingConfig, key) -> CompetitionTransformer:
         value_min=config.value_min,
         value_max=config.value_max,
         use_bf16=config.use_bf16,
+        observation_schema=config.observation_schema,
         key=key,
     )
+    if config.model_architecture == "transformer":
+        return CompetitionTransformer(**common)
+    if config.model_architecture == "conv_transformer":
+        return ConvCompetitionTransformer(
+            **common,
+            conv_channels=config.conv_channels,
+            conv_groups=config.conv_groups,
+        )
+    raise ValueError(f"Unsupported model_architecture {config.model_architecture!r}")
 
 
 def _batched_memory(config: TrainingConfig):
@@ -78,6 +92,40 @@ def _batched_memory(config: TrainingConfig):
     return jax.tree.map(
         lambda value: jnp.broadcast_to(value, (config.num_envs, *value.shape)), memory
     )
+
+
+def _conv_calibration_observations(config: TrainingConfig, pool):
+    """Build a deterministic two-seat batch from fresh competition states."""
+    requested = config.conv_calibration_samples
+    state_count = min((requested + 1) // 2, pool.armies.shape[0])
+    states = jax.tree.map(lambda value: value[:state_count], pool)
+    observations_zero = jax.vmap(lambda state: get_observation(state, 0))(states)
+    observations_one = jax.vmap(lambda state: get_observation(state, 1))(states)
+    observations = jax.tree.map(
+        lambda zero, one: jnp.concatenate([zero, one]),
+        observations_zero,
+        observations_one,
+    )
+    board_masks = jnp.concatenate([states.board_mask, states.board_mask])
+    sample_count = min(requested, 2 * state_count)
+    observations = jax.tree.map(lambda value: value[:sample_count], observations)
+    board_masks = board_masks[:sample_count]
+
+    memory = init_observation_memory(
+        config.pad_to, config.history_size, config.temporal_window
+    )
+    memory = jax.tree.map(
+        lambda value: jnp.broadcast_to(value, (sample_count, *value.shape)), memory
+    )
+    augmented, _ = jax.vmap(
+        lambda observation, current_memory, board_mask: augment_observation(
+            observation,
+            current_memory,
+            board_mask,
+            config.observation_schema,
+        )
+    )(observations, memory, board_masks)
+    return augmented
 
 
 def _replicate_for_pmap(tree):
@@ -147,6 +195,20 @@ def _save_checkpoint(
     )
 
 
+def _load_checkpoint_state(path, skeleton, config: TrainingConfig):
+    """Load a checkpoint with an actionable error for schema/shape mismatches."""
+    try:
+        return eqx.tree_deserialise_leaves(path, skeleton)
+    except (EOFError, TypeError, ValueError, RuntimeError) as error:
+        raise ValueError(
+            f"Could not load checkpoint {path!s} using observation_schema="
+            f"{config.observation_schema!r} ({config.input_channels} channels) and "
+            f"model_architecture={config.model_architecture!r}. "
+            "Use the checkpoint's original run config; legacy checkpoints require "
+            "legacy_38 with the transformer architecture."
+        ) from error
+
+
 def _make_evaluator(config: TrainingConfig, environment, n_maps: int, truncation: int):
     return eqx.filter_jit(
         lambda pool, network, key: evaluate_paired_vs_random(
@@ -159,6 +221,7 @@ def _make_evaluator(config: TrainingConfig, environment, n_maps: int, truncation
             pad_to=config.pad_to,
             history_size=config.history_size,
             temporal_window=config.temporal_window,
+            observation_schema=config.observation_schema,
         )
     )
 
@@ -288,7 +351,8 @@ def train(config: TrainingConfig, *, resume: str | None = None):
     print(f"Devices ({jax.device_count()}): {jax.devices()}")
     print(
         f"Competition baseline: L={config.depth}, d={config.embed_dim}, "
-        f"heads={config.attention_heads}, envs/device={config.num_envs}"
+        f"heads={config.attention_heads}, architecture={config.model_architecture}, "
+        f"envs/device={config.num_envs}"
     )
 
     key = jax.random.PRNGKey(config.seed)
@@ -318,7 +382,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
             saved_iteration,
             saved_stage_index,
             key,
-        ) = eqx.tree_deserialise_leaves(resume, skeleton)
+        ) = _load_checkpoint_state(resume, skeleton, config)
         start_iteration = int(saved_iteration)
         stage_index = int(saved_stage_index)
         if stage_index >= len(config.curriculum):
@@ -338,6 +402,28 @@ def train(config: TrainingConfig, *, resume: str | None = None):
     environment = make_environment(config, stage)
     key, pool_key = jax.random.split(key)
     pool, _ = environment.reset(pool_key)
+    if not resume and isinstance(network, ConvCompetitionTransformer):
+        calibration_observations = _conv_calibration_observations(config, pool)
+        network, calibration = calibrate_conv_token_rms(
+            network,
+            calibration_observations,
+            config.conv_initial_token_rms_ratio,
+        )
+        jax.block_until_ready(calibration)
+        calibration = {name: float(value) for name, value in calibration.items()}
+        calibration["samples"] = int(calibration_observations.shape[0])
+        (run_dir / "conv_calibration.json").write_text(
+            json.dumps(calibration, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        print(
+            "Calibrated convolutional token correction: "
+            f"ratio {calibration['ratio_before']:.4f} -> "
+            f"{calibration['ratio_after']:.4f} "
+            f"on {calibration['samples']} observations "
+            f"(projection x{calibration['projection_multiplier']:.4f})"
+        )
+        ema_network = network
+        optimizer_state = optimizer.init(eqx.filter(network, eqx.is_inexact_array))
     pool_replicated = _replicate_for_pmap(pool)
 
     eval_pool_size = max(config.eval_games // 2, 16)
@@ -386,6 +472,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
             mem_zero,
             mem_one,
             config.num_steps,
+            observation_schema=config.observation_schema,
         )
 
     rollout_pmapped = jax.pmap(rollout_shard)

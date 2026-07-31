@@ -8,7 +8,12 @@ import jax.numpy as jnp
 from generals.core.game import get_observation
 
 from .actions import decode_action, legal_action_mask
-from .observation import augment_observation, init_observation_memory, temporal_input
+from .observation import (
+    LEGACY_OBSERVATION_SCHEMA,
+    augment_observation,
+    init_observation_memory,
+    temporal_input,
+)
 
 
 def _batched_memory(size: int, pad_to: int, history_size: int, temporal_window: int):
@@ -33,6 +38,7 @@ def evaluate_paired_vs_random(
     pad_to: int = 21,
     history_size: int = 7,
     temporal_window: int = 512,
+    observation_schema: str = LEGACY_OBSERVATION_SCHEMA,
 ):
     """Play every selected map twice, swapping the network's player seat."""
     selected = jax.tree.map(lambda value: value[:n_maps], pool)
@@ -61,7 +67,11 @@ def evaluate_paired_vs_random(
             observation_one,
         )
 
-        augmented, memory = jax.vmap(augment_observation)(
+        augmented, memory = jax.vmap(
+            lambda observation, current_memory, board_mask: augment_observation(
+                observation, current_memory, board_mask, observation_schema
+            )
+        )(
             network_observation, memory, states.board_mask
         )
         histories = temporal_input(memory)

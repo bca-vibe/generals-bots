@@ -1,15 +1,16 @@
-# Competition L7 baseline training
+# Competition L7 transformer training
 
 This package implements the shared pre-training baseline for the Generals Bot
 competition. It is intentionally close to AverageJoe's released `L_7d` model,
 with only the changes required by the competition environment.
 
-## Architecture
+## Architectures
 
-The actor receives a deterministic 38-channel, 21×21 observation and two
+New competition runs use a deterministic 37-channel, 21×21 observation and two
 512-turn opponent-score histories. The spatial observation is divided into 49
-non-overlapping 3×3 patches and projected from 342 to 448 values per token.
-Two history tokens and one learned value token produce a 52×448 sequence.
+non-overlapping 3×3 patches and projected from 333 to 448 values per token. Two
+history tokens and one learned value token produce a 52×448 sequence. The
+versioned `legacy_38` schema remains available for historical checkpoints.
 
 The torso contains seven pre-LayerNorm transformer blocks:
 
@@ -25,7 +26,35 @@ separate `448 -> 1` projection from the value token produces one canonical pass
 logit. The final masked policy contains exactly 3,970 actions. The value token
 also produces 128 categorical logits over `[-1, 1]`.
 
-The model has 15,345,362 trainable floating-point parameters.
+Two matched model variants are available:
+
+- `transformer` is the pure 7-layer transformer control, with approximately
+  15.34 million trainable parameters under `competition_37`.
+- `conv_transformer` adds a 96-channel convolutional residual before the first
+  transformer block. Overlapping 3×3 convolutions build cell-level local
+  features, downsample them to 49 corrections, and add them to the ordinary
+  patch tokens before absolute position embeddings. It adds 787,744 trainable
+  parameters; the rest of the architecture is unchanged.
+
+For a fresh convolutional run, the output projection is calibrated once on 512
+two-seat observations from the generated competition-state pool. Its weights
+and bias are rescaled so the convolutional correction has 10% of the ordinary
+patch tokens' RMS immediately before the streams are added. The ratio is not
+constrained after initialization:
+
+```text
+RMS(delta_conv) / RMS(patch_tokens) = 0.10
+```
+
+The calibration batch contains 256 freshly generated maps viewed from both
+player seats, using the same normalized `competition_37` inputs as training.
+The corresponding configuration fields are
+`conv_initial_token_rms_ratio = 0.10` and `conv_calibration_samples = 512`.
+Calibration statistics—including the before/after ratios and applied projection
+multiplier—are written to `conv_calibration.json`. Checkpoint resumes restore
+the learned projection and do not recalibrate it. Given the same training seed,
+the transformer parameters in both variants remain bit-identical before
+training; only the convolutional parameters are extra.
 
 ## Observation memory
 
@@ -33,6 +62,7 @@ The model has 15,345,362 trainable floating-point parameters.
 
 - Seven own-army and visible-enemy-army delta frames.
 - Persistent seen terrain, structures, and previously observed enemy regions.
+- Persistent plain-cell evidence used to infer newly built castles in fog.
 - Last visible enemy army and logarithmic time-since-seen.
 - Public opponent army and land totals over 512 turns.
 - Absolute coordinates and broadcast game statistics.
@@ -87,6 +117,13 @@ generals-train \
   --config generals/training/configs/competition_l7.toml
 ```
 
+Launch the matched convolutional variant with:
+
+```bash
+generals-train \
+  --config generals/training/configs/competition_l7_conv.toml
+```
+
 The same entry point is available without installing the console script:
 
 ```bash
@@ -104,6 +141,17 @@ generals-train \
   --resume checkpoints/competition_l7_baseline/latest.eqx
 ```
 
+Convolutional checkpoints are written beneath
+`checkpoints/competition_l7_conv_stem/` and must be resumed with
+`competition_l7_conv.toml`. Checkpoints cannot be resumed across observation
+schemas or model architectures.
+
+```bash
+generals-train \
+  --config generals/training/configs/competition_l7_conv.toml \
+  --resume checkpoints/competition_l7_conv_stem/latest.eqx
+```
+
 A resumed run begins with fresh self-play environments and deterministic
 observation memory; the checkpoint restores the host RNG used to generate
 subsequent pools and evaluations.
@@ -119,6 +167,8 @@ Every metrics record contains rollout and update time, samples/second, PPO
 losses, entropy, approximate KL, clipping fraction, gradient norm, value
 explained variance, and completed self-play outcomes. Evaluation records report
 paired-map win/loss/draw counts, expected score, and paired-score dispersion.
+Fresh convolutional runs additionally write `conv_calibration.json`; its
+`ratio_after` should be approximately `0.10` before the first PPO iteration.
 
 The random opponent is only a curriculum gate and pipeline diagnostic. It is
 not sufficient for selecting the final model; architecture branches should be

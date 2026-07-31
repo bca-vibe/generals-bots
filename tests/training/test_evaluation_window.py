@@ -1,13 +1,30 @@
 """Regression: evaluation must respect a non-default temporal_window."""
 
 import jax
+import pytest
 
 from generals.training.config import TrainingConfig
+from generals.training.observation import (
+    COMPETITION_OBSERVATION_SCHEMA,
+    LEGACY_OBSERVATION_SCHEMA,
+)
 from generals.training.train import _make_evaluator, build_network, make_environment
 
 
-def test_evaluator_with_non_default_temporal_window():
+@pytest.mark.parametrize(
+    ("observation_schema", "model_architecture"),
+    [
+        (LEGACY_OBSERVATION_SCHEMA, "transformer"),
+        (COMPETITION_OBSERVATION_SCHEMA, "transformer"),
+        (COMPETITION_OBSERVATION_SCHEMA, "conv_transformer"),
+    ],
+)
+def test_evaluator_with_non_default_temporal_window(
+    observation_schema, model_architecture
+):
     config = TrainingConfig(
+        observation_schema=observation_schema,
+        model_architecture=model_architecture,
         temporal_window=64,
         depth=1,
         embed_dim=32,
@@ -15,6 +32,8 @@ def test_evaluator_with_non_default_temporal_window():
         ff_factor=2,
         use_bf16=False,
         value_bins=16,
+        conv_channels=12,
+        conv_groups=3,
         num_envs=2,
         num_steps=8,
         pool_size=4,

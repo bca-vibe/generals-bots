@@ -8,8 +8,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .actions import ACTION_COUNT, PASS_INDEX, SPATIAL_PLANES, decode_action
-from .observation import normalize_augmented_observation
+from .actions import SPATIAL_PLANES, decode_action
+from .observation import LEGACY_OBSERVATION_SCHEMA, normalize_augmented_observation
 
 
 def _to_bfloat16(tree):
@@ -114,6 +114,7 @@ class CompetitionTransformer(eqx.Module):
     value_min: float = eqx.field(static=True)
     value_max: float = eqx.field(static=True)
     use_bf16: bool = eqx.field(static=True)
+    observation_schema: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -130,6 +131,7 @@ class CompetitionTransformer(eqx.Module):
         value_min: float = -1.0,
         value_max: float = 1.0,
         use_bf16: bool = True,
+        observation_schema: str = LEGACY_OBSERVATION_SCHEMA,
         key,
     ):
         if board_size % patch_size:
@@ -141,6 +143,7 @@ class CompetitionTransformer(eqx.Module):
         self.value_min = value_min
         self.value_max = value_max
         self.use_bf16 = use_bf16
+        self.observation_schema = observation_schema
         keys = jax.random.split(key, depth + 9)
         patch_dim = input_channels * patch_size * patch_size
         self.patch_embedding = eqx.nn.Linear(patch_dim, model_dim, key=keys[0])
@@ -165,40 +168,7 @@ class CompetitionTransformer(eqx.Module):
         self.value_head = eqx.nn.Linear(model_dim, value_bins, key=keys[head_key + 2])
 
     def forward(self, observation, temporal_history, legal_mask):
-        net = _to_bfloat16(self) if self.use_bf16 else self
-        observation = normalize_augmented_observation(observation)
-        if self.use_bf16:
-            observation = observation.astype(jnp.bfloat16)
-            temporal_history = temporal_history.astype(jnp.bfloat16)
-
-        patch_grid = self.board_size // self.patch_size
-        patches = observation.reshape(
-            observation.shape[0], patch_grid, self.patch_size, patch_grid, self.patch_size
-        )
-        patches = patches.transpose(1, 3, 0, 2, 4).reshape(patch_grid**2, -1)
-        patch_tokens = jax.vmap(net.patch_embedding)(patches)
-        history_tokens = (
-            net.temporal_encoder(temporal_history) + net.temporal_type_embedding
-        )
-        tokens = jnp.concatenate([net.value_token, history_tokens, patch_tokens])
-        tokens = tokens + net.position_embedding
-        for block in net.blocks:
-            tokens = block(tokens)
-        tokens = jax.vmap(net.output_norm)(tokens)
-
-        value_logits = net.value_head(tokens[0]).astype(jnp.float32)
-        bin_centers = jnp.linspace(self.value_min, self.value_max, self.value_bins)
-        value = jnp.sum(jax.nn.softmax(value_logits) * bin_centers)
-
-        patch_logits = jax.vmap(net.spatial_policy_head)(tokens[3:]).astype(jnp.float32)
-        spatial_logits = patch_logits.reshape(
-            patch_grid, patch_grid, SPATIAL_PLANES, self.patch_size, self.patch_size
-        )
-        spatial_logits = spatial_logits.transpose(2, 0, 3, 1, 4).reshape(-1)
-        pass_logit = net.pass_head(tokens[0]).astype(jnp.float32)
-        logits = jnp.concatenate([spatial_logits, pass_logit])
-        logits = jnp.where(legal_mask, logits, -1e9)
-        return logits, value, value_logits
+        return _forward_transformer(self, observation, temporal_history, legal_mask)
 
     def __call__(self, observation, temporal_history, legal_mask, key, action_index=None):
         logits, value, value_logits = self.forward(
@@ -223,3 +193,77 @@ class CompetitionTransformer(eqx.Module):
 def greedy_action(model, observation, temporal_history, legal_mask):
     logits, _, _ = model.forward(observation, temporal_history, legal_mask)
     return decode_action(jnp.argmax(logits))
+
+
+def _embed_spatial_tokens(transformer, observation):
+    """Return the compute-cast model, normalized input, and patch tokens."""
+    net = _to_bfloat16(transformer) if transformer.use_bf16 else transformer
+    observation = normalize_augmented_observation(
+        observation, transformer.observation_schema
+    )
+    if transformer.use_bf16:
+        observation = observation.astype(jnp.bfloat16)
+
+    patch_grid = transformer.board_size // transformer.patch_size
+    patches = observation.reshape(
+        observation.shape[0],
+        patch_grid,
+        transformer.patch_size,
+        patch_grid,
+        transformer.patch_size,
+    )
+    patches = patches.transpose(1, 3, 0, 2, 4).reshape(patch_grid**2, -1)
+    return net, observation, jax.vmap(net.patch_embedding)(patches)
+
+
+def _forward_transformer(
+    transformer,
+    observation,
+    temporal_history,
+    legal_mask,
+    patch_residual=None,
+):
+    """Run the shared transformer, optionally adding a spatial-token correction."""
+    net, observation, patch_tokens = _embed_spatial_tokens(
+        transformer, observation
+    )
+    if transformer.use_bf16:
+        temporal_history = temporal_history.astype(jnp.bfloat16)
+
+    patch_grid = transformer.board_size // transformer.patch_size
+    if patch_residual is not None:
+        residual = (
+            _to_bfloat16(patch_residual)
+            if transformer.use_bf16
+            else patch_residual
+        )
+        patch_tokens = patch_tokens + residual(observation)
+
+    history_tokens = (
+        net.temporal_encoder(temporal_history) + net.temporal_type_embedding
+    )
+    tokens = jnp.concatenate([net.value_token, history_tokens, patch_tokens])
+    tokens = tokens + net.position_embedding
+    for block in net.blocks:
+        tokens = block(tokens)
+    tokens = jax.vmap(net.output_norm)(tokens)
+
+    value_logits = net.value_head(tokens[0]).astype(jnp.float32)
+    bin_centers = jnp.linspace(
+        transformer.value_min, transformer.value_max, transformer.value_bins
+    )
+    value = jnp.sum(jax.nn.softmax(value_logits) * bin_centers)
+
+    patch_logits = jax.vmap(net.spatial_policy_head)(tokens[3:]).astype(jnp.float32)
+    spatial_logits = patch_logits.reshape(
+        patch_grid,
+        patch_grid,
+        SPATIAL_PLANES,
+        transformer.patch_size,
+        transformer.patch_size,
+    )
+    spatial_logits = spatial_logits.transpose(2, 0, 3, 1, 4).reshape(-1)
+    pass_logit = net.pass_head(tokens[0]).astype(jnp.float32)
+    logits = jnp.concatenate([spatial_logits, pass_logit])
+    logits = jnp.where(legal_mask, logits, -1e9)
+    return logits, value, value_logits

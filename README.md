@@ -182,14 +182,26 @@ autopilot(agent, user_id="your_user_id", lobby_id="your_lobby")
 
 Register at [generals.io](https://generals.io) to get your user ID.
 
-## 🧠 Competition baseline training
+## 🧠 Competition model training
 
-The repository includes a data-parallel PPO implementation of the 7-layer
-AverageJoe-style competition baseline. It uses the canonical build/pass action
-space, deterministic fog-of-war memory, HL-Gauss value prediction, EMA weights,
-and a general-distance curriculum while preserving the complete competition
-ruleset. See [`generals/training/README.md`](generals/training/README.md) for the
-architecture, configuration, launch, resume, and evaluation details.
+The repository includes a data-parallel PPO implementation of two matched
+7-layer AverageJoe-style models trained from scratch on the versioned
+`competition_37` observation schema:
+
+- A 15.34M-parameter pure patch transformer.
+- A 16.13M-parameter variant with an overlapping convolutional stem added to
+  the patch tokens before transformer block 1.
+
+The convolutional branch is initialized from 512 generated two-seat
+observations so its correction has 10% of the ordinary patch tokens' RMS. This
+one-time calibration is recorded with the run and is not repeated when a
+checkpoint resumes. Both recipes use the canonical build/pass action space,
+deterministic fog-of-war memory, HL-Gauss value prediction, EMA weights, and a
+general-distance curriculum while preserving the complete competition ruleset.
+
+See [`generals/training/README.md`](generals/training/README.md) for tensor
+shapes, model details, configuration fields, launch/resume commands, checkpoint
+compatibility, and branch-evaluation guidance.
 
 ## 📄 Citation
 

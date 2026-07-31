@@ -9,6 +9,23 @@ import jax.numpy as jnp
 
 from generals.core.observation import Observation
 
+LEGACY_OBSERVATION_SCHEMA = "legacy_38"
+COMPETITION_OBSERVATION_SCHEMA = "competition_37"
+OBSERVATION_SCHEMAS = frozenset(
+    (LEGACY_OBSERVATION_SCHEMA, COMPETITION_OBSERVATION_SCHEMA)
+)
+
+
+def observation_channel_count(observation_schema: str, history_size: int) -> int:
+    """Return the spatial input width for one versioned observation schema."""
+    if observation_schema not in OBSERVATION_SCHEMAS:
+        raise ValueError(
+            f"Unknown observation schema {observation_schema!r}; "
+            f"expected one of {sorted(OBSERVATION_SCHEMAS)}"
+        )
+    base_channels = 24 if observation_schema == LEGACY_OBSERVATION_SCHEMA else 23
+    return base_channels + 2 * history_size
+
 
 class ObservationMemory(NamedTuple):
     own_army_deltas: jax.Array
@@ -18,6 +35,7 @@ class ObservationMemory(NamedTuple):
     known_castles: jax.Array
     known_generals: jax.Array
     known_mountains: jax.Array
+    ever_plain: jax.Array
     ever_seen: jax.Array
     ever_seen_enemy: jax.Array
     last_seen_enemy_army: jax.Array
@@ -39,6 +57,7 @@ def init_observation_memory(
         known_castles=jnp.zeros(spatial, dtype=jnp.bool_),
         known_generals=jnp.zeros(spatial, dtype=jnp.bool_),
         known_mountains=jnp.zeros(spatial, dtype=jnp.bool_),
+        ever_plain=jnp.zeros(spatial, dtype=jnp.bool_),
         ever_seen=jnp.zeros(spatial, dtype=jnp.bool_),
         ever_seen_enemy=jnp.zeros(spatial, dtype=jnp.bool_),
         last_seen_enemy_army=jnp.zeros(spatial, dtype=jnp.float32),
@@ -58,8 +77,14 @@ def augment_observation(
     observation: Observation,
     memory: ObservationMemory,
     board_mask: jax.Array | None = None,
+    observation_schema: str = LEGACY_OBSERVATION_SCHEMA,
 ) -> tuple[jax.Array, ObservationMemory]:
-    """Create the 38x21x21 input and update deterministic episode memory."""
+    """Create a versioned spatial input and update deterministic episode memory."""
+    if observation_schema not in OBSERVATION_SCHEMAS:
+        raise ValueError(
+            f"Unknown observation schema {observation_schema!r}; "
+            f"expected one of {sorted(OBSERVATION_SCHEMAS)}"
+        )
     if board_mask is None:
         board_mask = jnp.ones_like(observation.armies, dtype=jnp.bool_)
     padding = ~board_mask
@@ -78,9 +103,28 @@ def augment_observation(
     )
     ever_seen = memory.ever_seen | visible
     ever_seen_enemy = memory.ever_seen_enemy | _dilate_3x3(observation.opponent_cells)
-    known_castles = memory.known_castles | observation.castles
+    # The interface distinguishes ordinary fog from structures in fog. Therefore
+    # an ordinary fog cell proves that no mountain or castle occupies it even
+    # though its ownership and army are hidden. Mountains are static, so if a
+    # cell ever known to be plain later becomes a fogged structure, the build
+    # mechanic implies that it is a castle.
+    plain_now = (
+        board_mask
+        & ~observation.mountains
+        & ~observation.castles
+        & ~observation.structures_in_fog
+    )
+    ever_plain = memory.ever_plain | plain_now
     known_generals = memory.known_generals | observation.generals
     known_mountains = memory.known_mountains | observation.mountains | padding
+    inferred_castles = (
+        observation.structures_in_fog
+        & memory.ever_plain
+        & ~known_mountains
+    )
+    known_castles = memory.known_castles | observation.castles
+    if observation_schema == COMPETITION_OBSERVATION_SCHEMA:
+        known_castles = known_castles | inferred_castles
 
     # Ownership, not positive army count, defines visibility. A newly built
     # castle may legally have zero army and must still reset this memory.
@@ -108,33 +152,35 @@ def augment_observation(
     )
     ones = jnp.ones((height, width), dtype=jnp.float32)
 
+    common_channels = [
+        armies,
+        own_army,
+        enemy_army,
+        ever_seen,
+        ever_seen_enemy,
+        known_generals,
+        known_castles,
+        known_mountains,
+        observation.neutral_cells,
+        observation.owned_cells,
+        observation.opponent_cells,
+        observation.fog_cells & board_mask,
+        observation.structures_in_fog & board_mask,
+        observation.timestep * ones,
+        (observation.timestep % 50) * ones / 50.0,
+        observation.owned_land_count * ones,
+        observation.owned_army_count * ones,
+        observation.opponent_land_count * ones,
+        observation.opponent_army_count * ones,
+        last_seen_enemy_army,
+        jnp.log1p(last_seen_enemy_age) / 5.0,
+        x_coord,
+        y_coord,
+    ]
+    if observation_schema == LEGACY_OBSERVATION_SCHEMA:
+        common_channels.insert(3, armies * observation.neutral_cells)
     channels = jnp.stack(
-        [
-            armies,
-            own_army,
-            enemy_army,
-            armies * observation.neutral_cells,
-            ever_seen,
-            ever_seen_enemy,
-            known_generals,
-            known_castles,
-            known_mountains,
-            observation.neutral_cells,
-            observation.owned_cells,
-            observation.opponent_cells,
-            observation.fog_cells & board_mask,
-            observation.structures_in_fog & board_mask,
-            observation.timestep * ones,
-            (observation.timestep % 50) * ones / 50.0,
-            observation.owned_land_count * ones,
-            observation.owned_army_count * ones,
-            observation.opponent_land_count * ones,
-            observation.opponent_army_count * ones,
-            last_seen_enemy_army,
-            jnp.log1p(last_seen_enemy_age) / 5.0,
-            x_coord,
-            y_coord,
-        ],
+        common_channels,
         axis=0,
         dtype=jnp.float32,
     )
@@ -147,6 +193,7 @@ def augment_observation(
         known_castles=known_castles,
         known_generals=known_generals,
         known_mountains=known_mountains,
+        ever_plain=ever_plain,
         ever_seen=ever_seen,
         ever_seen_enemy=ever_seen_enemy,
         last_seen_enemy_army=last_seen_enemy_army,
@@ -170,9 +217,22 @@ def temporal_input(memory: ObservationMemory) -> jax.Array:
     return jnp.stack([memory.opponent_army_history, memory.opponent_land_history], axis=-2)
 
 
-def normalize_augmented_observation(observation: jax.Array) -> jax.Array:
-    """Apply AverageJoe's scale-50 normalization to the 38 input channels."""
-    scaled_channels = jnp.array(
-        [0, 1, 2, 3, 14, 16, 17, 18, 19, 20, *range(24, observation.shape[0])]
-    )
+def normalize_augmented_observation(
+    observation: jax.Array,
+    observation_schema: str = LEGACY_OBSERVATION_SCHEMA,
+) -> jax.Array:
+    """Apply AverageJoe's scale-50 normalization to a versioned input."""
+    if observation_schema == LEGACY_OBSERVATION_SCHEMA:
+        scaled_channels = jnp.array(
+            [0, 1, 2, 3, 14, 16, 17, 18, 19, 20, *range(24, observation.shape[0])]
+        )
+    elif observation_schema == COMPETITION_OBSERVATION_SCHEMA:
+        scaled_channels = jnp.array(
+            [0, 1, 2, 13, 15, 16, 17, 18, 19, *range(23, observation.shape[0])]
+        )
+    else:
+        raise ValueError(
+            f"Unknown observation schema {observation_schema!r}; "
+            f"expected one of {sorted(OBSERVATION_SCHEMAS)}"
+        )
     return observation.at[scaled_channels].divide(50.0)

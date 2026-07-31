@@ -9,6 +9,7 @@ from generals.core.game import get_observation
 
 from .actions import legal_action_mask
 from .observation import (
+    LEGACY_OBSERVATION_SCHEMA,
     augment_observation,
     reset_finished_memory,
     temporal_input,
@@ -28,6 +29,8 @@ def collect_self_play_rollout(
     memory_player_zero,
     memory_player_one,
     num_steps: int,
+    *,
+    observation_schema: str = LEGACY_OBSERVATION_SCHEMA,
 ):
     """Collect ``num_steps`` from both seats of every environment.
 
@@ -45,7 +48,11 @@ def collect_self_play_rollout(
         observations = _concatenate_players(obs_zero, obs_one)
         board_masks = jnp.concatenate([current_states.board_mask, current_states.board_mask])
 
-        augmented, updated_memory = jax.vmap(augment_observation)(
+        augmented, updated_memory = jax.vmap(
+            lambda observation, memory, board_mask: augment_observation(
+                observation, memory, board_mask, observation_schema
+            )
+        )(
             observations, current_memory, board_masks
         )
         histories = temporal_input(updated_memory)
@@ -108,7 +115,11 @@ def collect_self_play_rollout(
     final_one = jax.vmap(lambda state: get_observation(state, 1))(states)
     final_observations = _concatenate_players(final_zero, final_one)
     final_board_masks = jnp.concatenate([states.board_mask, states.board_mask])
-    final_augmented, final_memory = jax.vmap(augment_observation)(
+    final_augmented, final_memory = jax.vmap(
+        lambda observation, current_memory, board_mask: augment_observation(
+            observation, current_memory, board_mask, observation_schema
+        )
+    )(
         final_observations, memory, final_board_masks
     )
     final_histories = temporal_input(final_memory)
