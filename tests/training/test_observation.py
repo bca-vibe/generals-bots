@@ -45,7 +45,7 @@ def make_observation(opponent_cells=None, armies=None, **overrides):
 
 def test_schema_channel_counts():
     assert observation_channel_count(LEGACY_OBSERVATION_SCHEMA, 7) == 38
-    assert observation_channel_count(COMPETITION_OBSERVATION_SCHEMA, 7) == 37
+    assert observation_channel_count(COMPETITION_OBSERVATION_SCHEMA, 7) == 36
 
 
 def test_zero_army_enemy_cell_refreshes_last_seen_memory():
@@ -65,7 +65,7 @@ def test_zero_army_enemy_cell_refreshes_last_seen_memory():
     assert float(memory.last_seen_enemy_age[4, 5]) == 0.0
 
 
-def test_competition_schema_removes_only_neutral_army_channel():
+def test_competition_schema_removes_neutral_army_and_structure_in_fog_channels():
     neutral_armies = jnp.zeros((21, 21), dtype=jnp.int32).at[3, 4].set(17)
     observation = make_observation(armies=neutral_armies)
     legacy, _ = augment_observation(
@@ -80,10 +80,11 @@ def test_competition_schema_removes_only_neutral_army_channel():
     )
 
     assert legacy.shape == (38, 21, 21)
-    assert competition.shape == (37, 21, 21)
+    assert competition.shape == (36, 21, 21)
     assert float(legacy[3, 3, 4]) == 17.0
-    assert jnp.array_equal(competition[:3], legacy[:3])
-    assert jnp.array_equal(competition[3:], legacy[4:])
+    assert jnp.array_equal(
+        competition, jnp.delete(legacy, jnp.array([3, 13]), axis=0)
+    )
 
     normalized_legacy = normalize_augmented_observation(
         legacy, LEGACY_OBSERVATION_SCHEMA
@@ -91,8 +92,10 @@ def test_competition_schema_removes_only_neutral_army_channel():
     normalized_competition = normalize_augmented_observation(
         competition, COMPETITION_OBSERVATION_SCHEMA
     )
-    assert jnp.array_equal(normalized_competition[:3], normalized_legacy[:3])
-    assert jnp.array_equal(normalized_competition[3:], normalized_legacy[4:])
+    assert jnp.array_equal(
+        normalized_competition,
+        jnp.delete(normalized_legacy, jnp.array([3, 13]), axis=0),
+    )
 
 
 def test_padding_is_encoded_as_known_mountain_not_fog():
@@ -160,7 +163,7 @@ def test_ordinary_fog_counts_as_plain_evidence_for_castle_inference():
     assert float(augmented[6][target]) == 1.0
 
 
-def test_never_plain_structure_is_not_inferred():
+def test_starting_fogged_structure_is_recorded_as_known_mountain():
     target = (8, 9)
     augmented, memory = augment_observation(
         _structure_observation(target, structure=True),
@@ -169,6 +172,8 @@ def test_never_plain_structure_is_not_inferred():
     )
     assert not bool(memory.known_castles[target])
     assert float(augmented[6][target]) == 0.0
+    assert bool(memory.known_mountains[target])
+    assert float(augmented[7][target]) == 1.0
 
 
 def test_known_mountain_is_never_inferred_as_castle():

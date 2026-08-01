@@ -32,7 +32,7 @@ CONFIG_DIR = (
 
 def tiny_config(architecture: str) -> TrainingConfig:
     return TrainingConfig(
-        observation_schema="competition_37",
+        observation_schema="competition_36",
         model_architecture=architecture,
         depth=1,
         embed_dim=32,
@@ -58,7 +58,7 @@ def optimizer_for(config, network):
 
 def test_conv_patch_residual_shape_and_nonzero_initial_output():
     stem = ConvPatchResidual(
-        input_channels=37,
+        input_channels=36,
         conv_channels=96,
         model_dim=448,
         groups=12,
@@ -66,7 +66,7 @@ def test_conv_patch_residual_shape_and_nonzero_initial_output():
         patch_size=3,
         key=jax.random.PRNGKey(0),
     )
-    correction = stem(jax.random.normal(jax.random.PRNGKey(1), (37, 21, 21)))
+    correction = stem(jax.random.normal(jax.random.PRNGKey(1), (36, 21, 21)))
     assert correction.shape == (49, 448)
     assert float(jnp.max(jnp.abs(correction))) > 0.0
 
@@ -74,7 +74,7 @@ def test_conv_patch_residual_shape_and_nonzero_initial_output():
 def test_data_dependent_calibration_hits_ten_percent_token_rms():
     network = build_network(tiny_config("conv_transformer"), jax.random.PRNGKey(30))
     observations = jax.random.normal(
-        jax.random.PRNGKey(31), (16, 37, 21, 21)
+        jax.random.PRNGKey(31), (16, 36, 21, 21)
     )
     calibrated, metrics = calibrate_conv_token_rms(network, observations, 0.10)
     jax.block_until_ready(metrics)
@@ -107,7 +107,7 @@ def test_calibration_batch_uses_real_two_seat_augmented_observations():
     pool, _ = environment.reset(jax.random.PRNGKey(32))
     observations = _conv_calibration_observations(config, pool)
 
-    assert observations.shape == (8, 37, 21, 21)
+    assert observations.shape == (8, 36, 21, 21)
     network = build_network(config, jax.random.PRNGKey(33))
     _, metrics = calibrate_conv_token_rms(network, observations, 0.10)
     assert float(metrics["ratio_after"]) == pytest.approx(0.10, abs=1e-5)
@@ -131,7 +131,7 @@ def test_matched_seed_preserves_identical_transformer_parameters():
 
 def test_small_random_projection_gives_every_conv_layer_immediate_gradients():
     network = build_network(tiny_config("conv_transformer"), jax.random.PRNGKey(20))
-    observation = jax.random.normal(jax.random.PRNGKey(21), (37, 21, 21))
+    observation = jax.random.normal(jax.random.PRNGKey(21), (36, 21, 21))
     history = jnp.zeros((2, 512), dtype=jnp.float32)
     mask = jnp.ones((3970,), dtype=jnp.bool_)
 
@@ -155,7 +155,7 @@ def test_competition_architectures_have_identical_external_interface(architectur
     config = tiny_config(architecture)
     network = build_network(config, jax.random.PRNGKey(3))
     logits, value, value_logits = network.forward(
-        jnp.zeros((37, 21, 21), dtype=jnp.float32),
+        jnp.zeros((36, 21, 21), dtype=jnp.float32),
         jnp.zeros((2, 512), dtype=jnp.float32),
         jnp.ones((3970,), dtype=jnp.bool_),
     )

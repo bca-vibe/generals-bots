@@ -20,7 +20,7 @@ reset_pool_every = 20
 
 history_size = 7
 temporal_window = 512
-observation_schema = "competition_37"
+observation_schema = "competition_36"
 model_architecture = "conv_transformer"
 depth = 7
 embed_dim = 448

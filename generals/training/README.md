@@ -6,9 +6,9 @@ with only the changes required by the competition environment.
 
 ## Architectures
 
-New competition runs use a deterministic 37-channel, 21×21 observation and two
+New competition runs use a deterministic 36-channel, 21×21 observation and two
 512-turn opponent-score histories. The spatial observation is divided into 49
-non-overlapping 3×3 patches and projected from 333 to 448 values per token. Two
+non-overlapping 3×3 patches and projected from 324 to 448 values per token. Two
 history tokens and one learned value token produce a 52×448 sequence. The
 versioned `legacy_38` schema remains available for historical checkpoints.
 
@@ -29,7 +29,7 @@ also produces 128 categorical logits over `[-1, 1]`.
 Two matched model variants are available:
 
 - `transformer` is the pure 7-layer transformer control, with approximately
-  15.34 million trainable parameters under `competition_37`.
+  15.34 million trainable parameters under `competition_36`.
 - `conv_transformer` adds a 96-channel convolutional residual before the first
   transformer block. Overlapping 3×3 convolutions build cell-level local
   features, downsample them to 49 corrections, and add them to the ordinary
@@ -47,7 +47,7 @@ RMS(delta_conv) / RMS(patch_tokens) = 0.10
 ```
 
 The calibration batch contains 256 freshly generated maps viewed from both
-player seats, using the same normalized `competition_37` inputs as training.
+player seats, using the same normalized `competition_36` inputs as training.
 The corresponding configuration fields are
 `conv_initial_token_rms_ratio = 0.10` and `conv_calibration_samples = 512`.
 Calibration statistics—including the before/after ratios and applied projection
@@ -62,6 +62,8 @@ training; only the convolutional parameters are extra.
 
 - Seven own-army and visible-enemy-army delta frames.
 - Persistent seen terrain, structures, and previously observed enemy regions.
+- Start-of-game structures in fog recorded as known mountains; the redundant
+  structure-in-fog input channel is omitted.
 - Persistent plain-cell evidence used to infer newly built castles in fog.
 - Last visible enemy army and logarithmic time-since-seen.
 - Public opponent army and land totals over 512 turns.

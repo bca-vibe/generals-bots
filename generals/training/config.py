@@ -55,7 +55,7 @@ class TrainingConfig:
     history_size: int = 7
     temporal_window: int = 512
     # Legacy is the safe default for historical TOMLs that predate schema
-    # versioning. New training configs opt into competition_37 explicitly.
+    # versioning. New training configs opt into competition_36 explicitly.
     observation_schema: str = LEGACY_OBSERVATION_SCHEMA
     model_architecture: str = "transformer"
     depth: int = 7
@@ -166,7 +166,7 @@ class TrainingConfig:
             self.model_architecture == "conv_transformer"
             and self.observation_schema != COMPETITION_OBSERVATION_SCHEMA
         ):
-            raise ValueError("conv_transformer requires observation_schema='competition_37'")
+            raise ValueError("conv_transformer requires observation_schema='competition_36'")
         if self.conv_channels <= 0 or self.conv_groups <= 0:
             raise ValueError("conv_channels and conv_groups must be positive")
         if self.conv_channels % self.conv_groups:

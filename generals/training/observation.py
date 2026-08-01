@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from generals.core.observation import Observation
 
 LEGACY_OBSERVATION_SCHEMA = "legacy_38"
-COMPETITION_OBSERVATION_SCHEMA = "competition_37"
+COMPETITION_OBSERVATION_SCHEMA = "competition_36"
 OBSERVATION_SCHEMAS = frozenset(
     (LEGACY_OBSERVATION_SCHEMA, COMPETITION_OBSERVATION_SCHEMA)
 )
@@ -23,7 +23,7 @@ def observation_channel_count(observation_schema: str, history_size: int) -> int
             f"Unknown observation schema {observation_schema!r}; "
             f"expected one of {sorted(OBSERVATION_SCHEMAS)}"
         )
-    base_channels = 24 if observation_schema == LEGACY_OBSERVATION_SCHEMA else 23
+    base_channels = 24 if observation_schema == LEGACY_OBSERVATION_SCHEMA else 22
     return base_channels + 2 * history_size
 
 
@@ -117,6 +117,17 @@ def augment_observation(
     ever_plain = memory.ever_plain | plain_now
     known_generals = memory.known_generals | observation.generals
     known_mountains = memory.known_mountains | observation.mountains | padding
+    if observation_schema == COMPETITION_OBSERVATION_SCHEMA:
+        # Competition maps contain no castles at game start. Every fogged
+        # structure without prior plain evidence is therefore a static
+        # mountain. Conversely, ordinary fog is positive plain evidence, so a
+        # structure that later appears there can only be a newly built castle.
+        initial_fogged_mountains = (
+            observation.structures_in_fog
+            & ~memory.ever_plain
+            & ~memory.known_castles
+        )
+        known_mountains = known_mountains | initial_fogged_mountains
     inferred_castles = (
         observation.structures_in_fog
         & memory.ever_plain
@@ -165,7 +176,6 @@ def augment_observation(
         observation.owned_cells,
         observation.opponent_cells,
         observation.fog_cells & board_mask,
-        observation.structures_in_fog & board_mask,
         observation.timestep * ones,
         (observation.timestep % 50) * ones / 50.0,
         observation.owned_land_count * ones,
@@ -179,6 +189,7 @@ def augment_observation(
     ]
     if observation_schema == LEGACY_OBSERVATION_SCHEMA:
         common_channels.insert(3, armies * observation.neutral_cells)
+        common_channels.insert(13, observation.structures_in_fog & board_mask)
     channels = jnp.stack(
         common_channels,
         axis=0,
@@ -228,7 +239,7 @@ def normalize_augmented_observation(
         )
     elif observation_schema == COMPETITION_OBSERVATION_SCHEMA:
         scaled_channels = jnp.array(
-            [0, 1, 2, 13, 15, 16, 17, 18, 19, *range(23, observation.shape[0])]
+            [0, 1, 2, 12, 14, 15, 16, 17, 18, *range(22, observation.shape[0])]
         )
     else:
         raise ValueError(

@@ -260,7 +260,7 @@ def test_update_shard_matches_pre_refactor_update():
     ("observation_schema", "input_channels"),
     [
         (LEGACY_OBSERVATION_SCHEMA, 38),
-        (COMPETITION_OBSERVATION_SCHEMA, 37),
+        (COMPETITION_OBSERVATION_SCHEMA, 36),
     ],
 )
 def test_checkpoint_roundtrip_with_replicated_ema(
@@ -344,7 +344,7 @@ def test_checkpoint_schema_mismatch_has_clear_error(tmp_path):
         observation_schema=COMPETITION_OBSERVATION_SCHEMA
     )
     competition_network = CompetitionTransformer(
-        input_channels=37,
+        input_channels=36,
         depth=1,
         model_dim=32,
         heads=4,
