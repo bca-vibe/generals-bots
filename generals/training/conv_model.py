@@ -119,7 +119,7 @@ class ConvCompetitionTransformer(eqx.Module):
         self,
         *,
         board_size: int = 21,
-        input_channels: int = 36,
+        input_channels: int = 39,
         history_window: int = 512,
         patch_size: int = 3,
         depth: int = 7,

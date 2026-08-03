@@ -40,6 +40,7 @@ def collect_self_play_rollout(
     """
     num_envs = states.armies.shape[0]
     memory = _concatenate_players(memory_player_zero, memory_player_one)
+    deathtouch_turn = environment.deathtouch_turn or 800
 
     def scan_step(carry, _):
         current_states, rng, current_memory = carry
@@ -50,7 +51,11 @@ def collect_self_play_rollout(
 
         augmented, updated_memory = jax.vmap(
             lambda observation, memory, board_mask: augment_observation(
-                observation, memory, board_mask, observation_schema
+                observation,
+                memory,
+                board_mask,
+                observation_schema,
+                deathtouch_turn,
             )
         )(
             observations, current_memory, board_masks
@@ -117,7 +122,11 @@ def collect_self_play_rollout(
     final_board_masks = jnp.concatenate([states.board_mask, states.board_mask])
     final_augmented, final_memory = jax.vmap(
         lambda observation, current_memory, board_mask: augment_observation(
-            observation, current_memory, board_mask, observation_schema
+            observation,
+            current_memory,
+            board_mask,
+            observation_schema,
+            deathtouch_turn,
         )
     )(
         final_observations, memory, final_board_masks

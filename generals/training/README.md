@@ -6,11 +6,14 @@ with only the changes required by the competition environment.
 
 ## Architectures
 
-New competition runs use a deterministic 36-channel, 21×21 observation and two
+New competition runs use a deterministic 39-channel, 21×21 observation and two
 512-turn opponent-score histories. The spatial observation is divided into 49
-non-overlapping 3×3 patches and projected from 324 to 448 values per token. Two
+non-overlapping 3×3 patches and projected from 351 to 448 values per token. Two
 history tokens and one learned value token produce a 52×448 sequence. The
 versioned `legacy_38` schema remains available for historical checkpoints.
+The three competition-only channels expose whether deathtouch is active, a
+clipped 200-turn countdown to its turn-800 activation, and the exact per-cell
+castle build price.
 
 The torso contains seven pre-LayerNorm transformer blocks:
 
@@ -29,11 +32,11 @@ also produces 128 categorical logits over `[-1, 1]`.
 Two matched model variants are available:
 
 - `transformer` is the pure 7-layer transformer control, with approximately
-  15.34 million trainable parameters under `competition_36`.
+  15.35 million trainable parameters under `competition_39`.
 - `conv_transformer` adds a 96-channel convolutional residual before the first
   transformer block. Overlapping 3×3 convolutions build cell-level local
   features, downsample them to 49 corrections, and add them to the ordinary
-  patch tokens before absolute position embeddings. It adds 787,744 trainable
+  patch tokens before absolute position embeddings. It adds 789,472 trainable
   parameters; the rest of the architecture is unchanged.
 
 For a fresh convolutional run, the output projection is calibrated once on 512
@@ -47,7 +50,7 @@ RMS(delta_conv) / RMS(patch_tokens) = 0.10
 ```
 
 The calibration batch contains 256 freshly generated maps viewed from both
-player seats, using the same normalized `competition_36` inputs as training.
+player seats, using the same normalized `competition_39` inputs as training.
 The corresponding configuration fields are
 `conv_initial_token_rms_ratio = 0.10` and `conv_calibration_samples = 512`.
 Calibration statistics—including the before/after ratios and applied projection
@@ -68,6 +71,8 @@ training; only the convolutional parameters are extra.
 - Last visible enemy army and logarithmic time-since-seen.
 - Public opponent army and land totals over 512 turns.
 - Absolute coordinates and broadcast game statistics.
+- Broadcast deathtouch-active and countdown maps, plus the exact castle-cost
+  map derived from currently owned structures.
 
 Rectangular maps carry a public board mask. Padding is encoded as a known
 mountain rather than fog, matching the dimensions supplied to a submitted bot
@@ -201,3 +206,31 @@ Fresh convolutional runs additionally write `conv_calibration.json`; its
 The random opponent is only a curriculum gate and pipeline diagnostic. It is
 not sufficient for selecting the final model; architecture branches should be
 compared against a frozen checkpoint league on locked paired maps.
+
+## Heuristic league
+
+`generals.training.league` exposes deterministic JAX policies for the heuristic
+evaluation set. `human_exe` is a clean competition-rules adaptation of
+[EklipZ's MIT-licensed Human.exe](https://github.com/EklipZgit/generals-bot).
+It retains functional match memory for explored terrain, last-seen armies,
+newly built castles, and enemy-general origin evidence; the evaluator carries
+that state through its compiled scan. Its policy ladder prioritizes immediate
+wins, projected defense, favorable exchanges, timed gather/launch play,
+information expansion, and build-site economics. Castle construction replaces
+neutral-city capture, and predicted-general hunts become urgent before the
+turn-800 deathtouch phase.
+
+Run a seat-swapped locked-map benchmark with:
+
+```bash
+python tools/benchmark_heuristic_league.py \
+  --candidate human_exe \
+  --maps 16 \
+  --seed 20260806 \
+  --output runs/human_exe_benchmark.json
+```
+
+The default opponent list includes every registered heuristic except the
+candidate itself. Stateful policies have a larger one-time JAX compile than the
+older stateless heuristics, so use them for periodic or post-training league
+evaluation rather than the lightweight curriculum gate.

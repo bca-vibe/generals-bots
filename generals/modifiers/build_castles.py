@@ -25,21 +25,40 @@ Rules:
 Maps for this mode carry no neutral castles: GeneralsEnv(build_castles=True)
 strips them from generated grids via strip_neutral_castles().
 """
+
 import jax
 import jax.numpy as jnp
 
 from generals.core import game
 
-BUILD = 2            # action pass-field value meaning "build at (row, col)"
+BUILD = 2  # action pass-field value meaning "build at (row, col)"
 BASE_COST = 35
-PROXIMITY_PENALTY = 14   # surcharge at distance 0, fading by...
-PROXIMITY_DECAY = 2      # ...this much per manhattan step (zero from d=7)
+PROXIMITY_PENALTY = 14  # surcharge at distance 0, fading by...
+PROXIMITY_DECAY = 2  # ...this much per manhattan step (zero from d=7)
 _RADIUS = (PROXIMITY_PENALTY - 1) // PROXIMITY_DECAY  # farthest d with a surcharge
 
 
 def strip_neutral_castles(grid: jnp.ndarray) -> jnp.ndarray:
     """Remove neutral castles from a generated grid (values > 2 are castles)."""
     return jnp.where(grid > 2, 0, grid)
+
+
+def build_cost_grid_from_structures(structures: jnp.ndarray) -> jnp.ndarray:
+    """Return the exact castle price grid for one player's structure mask."""
+    H, W = structures.shape
+    structures = structures.astype(jnp.int32)
+    padded = jnp.pad(structures, _RADIUS)
+
+    cost = jnp.full((H, W), BASE_COST, dtype=jnp.int32)
+    for di in range(-_RADIUS, _RADIUS + 1):
+        for dj in range(-_RADIUS, _RADIUS + 1):
+            surcharge = PROXIMITY_PENALTY - PROXIMITY_DECAY * (abs(di) + abs(dj))
+            if surcharge > 0:
+                shifted = padded[
+                    _RADIUS + di : _RADIUS + di + H, _RADIUS + dj : _RADIUS + dj + W
+                ]
+                cost = cost + surcharge * shifted
+    return cost
 
 
 def build_cost_grid(state: game.GameState, player_idx: int) -> jnp.ndarray:
@@ -49,22 +68,14 @@ def build_cost_grid(state: game.GameState, player_idx: int) -> jnp.ndarray:
     distance d. Computed as a sum of shifted copies of the structure mask —
     the surcharge kernel only spans d <= _RADIUS, so this is ~85 cheap adds.
     """
-    H, W = state.armies.shape
     own = state.ownership[player_idx]
-    structures = ((state.castles | state.generals) & own).astype(jnp.int32)
-    padded = jnp.pad(structures, _RADIUS)
-
-    cost = jnp.full((H, W), BASE_COST, dtype=jnp.int32)
-    for di in range(-_RADIUS, _RADIUS + 1):
-        for dj in range(-_RADIUS, _RADIUS + 1):
-            surcharge = PROXIMITY_PENALTY - PROXIMITY_DECAY * (abs(di) + abs(dj))
-            if surcharge > 0:
-                shifted = padded[_RADIUS + di:_RADIUS + di + H, _RADIUS + dj:_RADIUS + dj + W]
-                cost = cost + surcharge * shifted
-    return cost
+    structures = (state.castles | state.generals) & own
+    return build_cost_grid_from_structures(structures)
 
 
-def _apply_one(state: game.GameState, player_idx: int, action: jnp.ndarray) -> game.GameState:
+def _apply_one(
+    state: game.GameState, player_idx: int, action: jnp.ndarray
+) -> game.GameState:
     H, W = state.armies.shape
     is_build = action[0] == BUILD
     r, c = action[1], action[2]
@@ -86,8 +97,9 @@ def _apply_one(state: game.GameState, player_idx: int, action: jnp.ndarray) -> g
 
 
 @jax.jit
-def apply_build_actions(state: game.GameState,
-                        actions: jnp.ndarray) -> tuple[game.GameState, jnp.ndarray]:
+def apply_build_actions(
+    state: game.GameState, actions: jnp.ndarray
+) -> tuple[game.GameState, jnp.ndarray]:
     """Resolve both players' build actions; rewrite them to passes.
 
     Builds target the builder's own cells and prices depend only on the
@@ -105,7 +117,9 @@ def apply_build_actions(state: game.GameState,
 
 
 @jax.jit
-def step(state: game.GameState, actions: jnp.ndarray) -> tuple[game.GameState, game.GameInfo]:
+def step(
+    state: game.GameState, actions: jnp.ndarray
+) -> tuple[game.GameState, game.GameInfo]:
     """Drop-in replacement for game.step under the build-castles modifier."""
     state, actions = apply_build_actions(state, actions)
     return game.step(state, actions)

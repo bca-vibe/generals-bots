@@ -16,8 +16,8 @@ from generals.training.train import build_network
     ("observation_schema", "model_architecture", "input_channels"),
     [
         (LEGACY_OBSERVATION_SCHEMA, "transformer", 38),
-        (COMPETITION_OBSERVATION_SCHEMA, "transformer", 36),
-        (COMPETITION_OBSERVATION_SCHEMA, "conv_transformer", 36),
+        (COMPETITION_OBSERVATION_SCHEMA, "transformer", 39),
+        (COMPETITION_OBSERVATION_SCHEMA, "conv_transformer", 39),
     ],
 )
 def test_rollout_uses_selected_observation_schema(

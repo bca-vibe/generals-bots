@@ -1,0 +1,11 @@
+{"draws": 512.0, "games": 512.0, "losses": 0.0, "opponent": "random", "paired_score_std": 0.0, "score": 0.5, "wins": 0.0}
+{"draws": 335.0, "games": 512.0, "losses": 177.0, "opponent": "expander", "paired_score_std": 0.17302250862121582, "score": 0.3271484375, "wins": 0.0}
+{"draws": 4.0, "games": 512.0, "losses": 508.0, "opponent": "hunter", "paired_score_std": 0.03807341307401657, "score": 0.00390625, "wins": 0.0}
+{"draws": 4.0, "games": 512.0, "losses": 508.0, "opponent": "harvester", "paired_score_std": 0.03807341307401657, "score": 0.00390625, "wins": 0.0}
+{"draws": 511.0, "games": 512.0, "losses": 1.0, "opponent": "castle_economist", "paired_score_std": 0.015594452619552612, "score": 0.4990234375, "wins": 0.0}
+{"draws": 430.0, "games": 512.0, "losses": 82.0, "opponent": "deathtouch_clock", "paired_score_std": 0.18069308996200562, "score": 0.419921875, "wins": 0.0}
+{"draws": 512.0, "games": 512.0, "losses": 0.0, "opponent": "draw_grinder", "paired_score_std": 0.0, "score": 0.5, "wins": 0.0}
+{"draws": 506.0, "games": 512.0, "losses": 6.0, "opponent": "fog_scout", "paired_score_std": 0.03782210126519203, "score": 0.494140625, "wins": 0.0}
+{"draws": 427.0, "games": 512.0, "losses": 85.0, "opponent": "raider", "paired_score_std": 0.18539004027843475, "score": 0.4169921875, "wins": 0.0}
+{"draws": 511.0, "games": 512.0, "losses": 1.0, "opponent": "sentinel", "paired_score_std": 0.015594452619552612, "score": 0.4990234375, "wins": 0.0}
+{"draws": 3752.0, "games": 5120.0, "losses": 1368.0, "macro_score": 0.36640625, "opponent": "aggregate", "score": 0.36640625, "wins": 0.0}

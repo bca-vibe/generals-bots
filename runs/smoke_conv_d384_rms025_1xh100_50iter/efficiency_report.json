@@ -1,0 +1,104 @@
+{
+  "compilation_cache_first_iteration_savings_seconds": 55.288490760998684,
+  "cprofile_excerpt": "Sat Aug  1 23:33:16 2026    /home/dev/generals-d384-smoke-artifacts/phase_profile.pstats\n\n         40112797 function calls (39369559 primitive calls) in 181.480 seconds\n\n   Ordered by: cumulative time\n   List reduced from 8850 to 50 due to restriction <50>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n   1707/1    0.053    0.000  181.669  181.669 {built-in method builtins.exec}\n        1    0.000    0.000  181.669  181.669 <string>:1(<module>)\n        1    0.000    0.000  181.669  181.669 <frozen runpy>:201(run_module)\n        1    0.000    0.000  178.978  178.978 <frozen runpy>:65(_run_code)\n        1    0.000    0.000  178.978  178.978 /home/dev/generals-d384-smoke-src/generals/training/train.py:1(<module>)\n        1    0.020    0.020  178.870  178.870 /home/dev/generals-d384-smoke-src/generals/training/train.py:918(main)\n        1    0.049    0.049  178.847  178.847 /home/dev/generals-d384-smoke-src/generals/training/train.py:445(train)\n       49   83.935    1.713  117.572    2.399 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/pmap.py:315(wrapped)\n40063/866    0.045    0.000   91.646    0.106 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/traceback_util.py:191(reraise_with_filtered_traceback)\n37870/713    0.150    0.000   91.225    0.128 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:250(cache_miss)\n37870/21037    0.179    0.000   81.795    0.004 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:130(_run_python_pjit)\n      418    0.011    0.000   72.677    0.174 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:1137(_pjit_call_impl_python)\n5475/3151    0.043    0.000   70.806    0.022 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/profiler.py:417(wrapper)\n151733/46048    0.985    0.000   41.828    0.001 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/core.py:660(bind)\n152930/74389    0.288    0.000   37.423    0.001 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/core.py:709(bind_with_trace)\n      418    0.006    0.000   36.217    0.087 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:1209(compile)\n      418    0.037    0.000   36.210    0.087 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:1686(from_hlo)\n      418    0.011    0.000   35.946    0.086 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:1499(_cached_compilation)\n      418    0.013    0.000   35.764    0.086 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/compiler.py:387(compile_or_get_cached)\n 4141/698    0.008    0.000   31.545    0.045 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/linear_util.py:210(call_wrapped)\n        2    0.002    0.001   30.933   15.467 /home/dev/generals-d384-smoke-src/generals/core/env.py:223(reset)\n      380    0.005    0.000   27.896    0.073 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/compiler.py:727(_compile_and_write_cache)\n      380   27.875    0.073   27.876    0.073 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/compiler.py:292(backend_compile_and_load)\n  691/223    0.017    0.000   25.751    0.115 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/api.py:1146(vmap_f)\n  691/223    0.008    0.000   25.555    0.115 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/batching.py:336(_batch_outer)\n  691/223    0.018    0.000   25.547    0.115 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/batching.py:344(_batch_inner)\n  691/223    0.003    0.000   25.452    0.114 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/batching.py:118(flatten_fun_for_vmap)\n     4353    0.015    0.000   24.064    0.006 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/core.py:1285(process_primitive)\n39719/12722    0.369    0.000   20.180    0.002 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/batching.py:255(process_primitive)\n      418   18.052    0.043   18.958    0.045 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:374(__call__)\n37870/17541    0.335    0.000   18.859    0.001 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:616(_infer_params)\n 2712/749    0.158    0.000   18.209    0.024 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:466(_trace_for_jit)\n 2993/885    0.098    0.000   18.007    0.020 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/partial_eval.py:2268(trace_to_jaxpr)\n      418    0.012    0.000   17.360    0.042 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:1082(_resolve_and_lower)\n      418    0.002    0.000   17.307    0.041 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/pjit.py:1247(_pjit_lower)\n      418    0.067    0.000   17.300    0.041 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py:954(lower_sharding_computation)\n     3639    0.365    0.000   16.743    0.005 /home/dev/generals-d384-smoke-src/.venv/lib/python3.11/site-packages/jax/_src/dispatch.py:81(apply_primitive)",
+  "event_timings_seconds": {
+    "evaluation_seconds": 23.116714305011556
+  },
+  "gpu": {
+    "gpu_util_pct": {
+      "maximum": 100.0,
+      "median": 95.0,
+      "minimum": 0.0,
+      "p10": 0.0,
+      "p90": 100.0
+    },
+    "memory_total_mib": {
+      "maximum": 81559.0,
+      "median": 81559.0,
+      "minimum": 81559.0,
+      "p10": 81559.0,
+      "p90": 81559.0
+    },
+    "memory_used_mib": {
+      "maximum": 61537.0,
+      "median": 61509.0,
+      "minimum": 0.0,
+      "p10": 61379.0,
+      "p90": 61531.0
+    },
+    "memory_util_pct": {
+      "maximum": 85.0,
+      "median": 27.5,
+      "minimum": 0.0,
+      "p10": 0.0,
+      "p90": 83.0
+    },
+    "peak_memory_fraction": 0.7545090057504383,
+    "power_w": {
+      "maximum": 654.11,
+      "median": 333.26,
+      "minimum": 68.09,
+      "p10": 115.30699999999999,
+      "p90": 642.34
+    },
+    "sm_clock_mhz": {
+      "maximum": 1980.0,
+      "median": 1980.0,
+      "minimum": 345.0,
+      "p10": 1980.0,
+      "p90": 1980.0
+    }
+  },
+  "gpu_samples": 1018,
+  "iteration_seconds": {
+    "maximum": 8.650932449003449,
+    "median": 8.62314590200549,
+    "minimum": 8.604637479002122,
+    "p10": 8.614806564201718,
+    "p90": 8.631783035202535
+  },
+  "limitations": [
+    "One H100 cannot characterize NCCL or multi-device pmap scaling.",
+    "nvidia-smi samples are coarse and cannot identify individual kernel launch gaps.",
+    "No change to model math, sample order, precision, optimizer order, or curriculum was benchmarked."
+  ],
+  "phase_medians_seconds": {
+    "host_seconds": 0.02983299999323208,
+    "iteration_seconds": 8.641263167999568,
+    "rollout_seconds": 5.122792782000033,
+    "update_seconds": 3.4916459679952823
+  },
+  "phase_shares": {
+    "host": 0.0034523887784959507,
+    "rollout": 0.592829159626896,
+    "update": 0.4040666162009263
+  },
+  "recommendations": [
+    {
+      "area": "host dispatch and bookkeeping",
+      "classification": "not-worthwhile",
+      "evidence": "Only 0.3% of synchronized iteration time is outside rollout/update",
+      "upper_bound_speedup": 0.0034523887784959507
+    },
+    {
+      "area": "single-GPU occupancy",
+      "classification": "not-worthwhile",
+      "evidence": "Sampled GPU utilization is already high"
+    },
+    {
+      "area": "persistent JAX compilation cache",
+      "classification": "measured-safe",
+      "evidence": "The diagnostic passes reuse the production compilation cache without changing the training program",
+      "next_test": "Retain a per-shape cache on production nodes and record cold/warm startup separately"
+    }
+  ],
+  "samples_per_second": {
+    "maximum": 60930.86446458888,
+    "median": 60800.084558242954,
+    "minimum": 60604.79642982252,
+    "p10": 60739.24748807676,
+    "p90": 60858.94074340556
+  },
+  "steady_state_iterations": 45,
+  "trace_status": "Unavailable on this node: three isolated attempts (a three-iteration default trace, a three-iteration trace without Python call tracing, and a one-iteration device-only trace without HLO protos) each exited with SIGSEGV at the first traced production rollout under JAX/jaxlib 0.10.2 and NVIDIA driver 580.159.03. A minimal H100 matrix-multiply trace succeeded, isolating the failure to profiling this full pmap workload. No valid production XPlane artifact was produced; kernel-level launch gaps therefore cannot be claimed from this run."
+}

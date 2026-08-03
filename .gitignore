@@ -173,10 +173,14 @@ competition/agents/expander_rust/target/
 competition/agents/*/agent
 competition/agents/*/target/
 
+# Locally packaged competition submission archives
+submissions/
+
 # local research artifacts
 figures/
 checkpoints/
 uv.lock
+.jax_cache/
 
 # macOS
 .DS_Store

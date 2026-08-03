@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+import pytest
 
 from generals.core import game
 from generals.core.env import GeneralsEnv
@@ -8,6 +9,7 @@ from generals.core.observation import Observation
 from generals.modifiers import build_castles
 from generals.training.observation import (
     COMPETITION_OBSERVATION_SCHEMA,
+    COMPETITION_RULE_CHANNEL_NAMES,
     LEGACY_OBSERVATION_SCHEMA,
     augment_observation,
     init_observation_memory,
@@ -45,7 +47,12 @@ def make_observation(opponent_cells=None, armies=None, **overrides):
 
 def test_schema_channel_counts():
     assert observation_channel_count(LEGACY_OBSERVATION_SCHEMA, 7) == 38
-    assert observation_channel_count(COMPETITION_OBSERVATION_SCHEMA, 7) == 36
+    assert observation_channel_count(COMPETITION_OBSERVATION_SCHEMA, 7) == 39
+    assert COMPETITION_RULE_CHANNEL_NAMES == (
+        "deathtouch_active",
+        "deathtouch_countdown",
+        "build_cost",
+    )
 
 
 def test_zero_army_enemy_cell_refreshes_last_seen_memory():
@@ -65,7 +72,7 @@ def test_zero_army_enemy_cell_refreshes_last_seen_memory():
     assert float(memory.last_seen_enemy_age[4, 5]) == 0.0
 
 
-def test_competition_schema_removes_neutral_army_and_structure_in_fog_channels():
+def test_competition_schema_replaces_removed_channels_with_rule_channels():
     neutral_armies = jnp.zeros((21, 21), dtype=jnp.int32).at[3, 4].set(17)
     observation = make_observation(armies=neutral_armies)
     legacy, _ = augment_observation(
@@ -80,11 +87,14 @@ def test_competition_schema_removes_neutral_army_and_structure_in_fog_channels()
     )
 
     assert legacy.shape == (38, 21, 21)
-    assert competition.shape == (36, 21, 21)
+    assert competition.shape == (39, 21, 21)
     assert float(legacy[3, 3, 4]) == 17.0
-    assert jnp.array_equal(
-        competition, jnp.delete(legacy, jnp.array([3, 13]), axis=0)
-    )
+    reduced_legacy = jnp.delete(legacy, jnp.array([3, 13]), axis=0)
+    assert jnp.array_equal(competition[:22], reduced_legacy[:22])
+    assert jnp.array_equal(competition[25:], reduced_legacy[22:])
+    assert float(competition[22, 0, 0]) == 0.0
+    assert float(competition[23, 0, 0]) == 1.0
+    assert float(competition[24, 0, 0]) == 35.0
 
     normalized_legacy = normalize_augmented_observation(
         legacy, LEGACY_OBSERVATION_SCHEMA
@@ -92,10 +102,49 @@ def test_competition_schema_removes_neutral_army_and_structure_in_fog_channels()
     normalized_competition = normalize_augmented_observation(
         competition, COMPETITION_OBSERVATION_SCHEMA
     )
-    assert jnp.array_equal(
-        normalized_competition,
-        jnp.delete(normalized_legacy, jnp.array([3, 13]), axis=0),
+    reduced_normalized_legacy = jnp.delete(
+        normalized_legacy, jnp.array([3, 13]), axis=0
     )
+    assert jnp.array_equal(normalized_competition[:22], reduced_normalized_legacy[:22])
+    assert jnp.array_equal(normalized_competition[25:], reduced_normalized_legacy[22:])
+    assert float(normalized_competition[24, 0, 0]) == pytest.approx(0.7)
+
+
+def test_competition_rule_channels_encode_threshold_countdown_and_exact_build_cost():
+    shape = (21, 21)
+    owned = jnp.ones(shape, dtype=jnp.bool_)
+    generals = jnp.zeros(shape, dtype=jnp.bool_).at[10, 10].set(True)
+    castles = jnp.zeros(shape, dtype=jnp.bool_).at[10, 14].set(True)
+    observation = make_observation(
+        owned_cells=owned,
+        neutral_cells=jnp.zeros(shape, dtype=jnp.bool_),
+        generals=generals,
+        castles=castles,
+        timestep=jnp.int32(799),
+    )
+    augmented, _ = augment_observation(
+        observation,
+        init_observation_memory(),
+        observation_schema=COMPETITION_OBSERVATION_SCHEMA,
+        deathtouch_turn=800,
+    )
+    assert float(augmented[22, 10, 11]) == 0.0
+    assert float(augmented[23, 10, 11]) == pytest.approx(0.005)
+    # 35 base + 12 from the adjacent general + 8 from the castle at distance 3.
+    assert float(augmented[24, 10, 11]) == 55.0
+    assert float(augmented[24, 0, 0]) == 35.0
+
+    active_observation = observation._replace(timestep=jnp.int32(800))
+    active, _ = augment_observation(
+        active_observation,
+        init_observation_memory(),
+        observation_schema=COMPETITION_OBSERVATION_SCHEMA,
+        deathtouch_turn=800,
+    )
+    assert float(active[22, 10, 11]) == 1.0
+    assert float(active[23, 10, 11]) == 0.0
+    normalized = normalize_augmented_observation(active, COMPETITION_OBSERVATION_SCHEMA)
+    assert float(normalized[24, 10, 11]) == pytest.approx(1.1)
 
 
 def test_padding_is_encoded_as_known_mountain_not_fog():
@@ -112,7 +161,9 @@ def test_padding_is_encoded_as_known_mountain_not_fog():
     assert float(augmented[13, 20, 20]) == 0.0
 
 
-def _structure_observation(target, *, fog=False, structure=False, castle=False, mountain=False):
+def _structure_observation(
+    target, *, fog=False, structure=False, castle=False, mountain=False
+):
     shape = (21, 21)
     zeros = jnp.zeros(shape, dtype=jnp.bool_)
     fog_cells = zeros.at[target].set(fog)
@@ -248,8 +299,10 @@ def test_competition_build_transitions_fog_to_structure_on_same_turn():
 
     state = state._replace(
         armies=state.armies.at[target].set(100),
-        ownership=state.ownership.at[0, target[0], target[1]].set(False)
-        .at[1, target[0], target[1]].set(True),
+        ownership=state.ownership.at[0, target[0], target[1]]
+        .set(False)
+        .at[1, target[0], target[1]]
+        .set(True),
         ownership_neutral=state.ownership_neutral.at[target].set(False),
     )
     before = game.get_observation(state, 0)

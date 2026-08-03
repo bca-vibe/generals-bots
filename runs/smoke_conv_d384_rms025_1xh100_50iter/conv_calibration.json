@@ -1,0 +1,9 @@
+{
+  "correction_rms_after": 0.04169725626707077,
+  "correction_rms_before": 0.35151806473731995,
+  "patch_token_rms": 0.1667981892824173,
+  "projection_multiplier": 0.11862704157829285,
+  "ratio_after": 0.24998626112937927,
+  "ratio_before": 2.107445240020752,
+  "samples": 512
+}

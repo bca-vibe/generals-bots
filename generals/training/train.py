@@ -21,7 +21,8 @@ from generals.core.game import get_observation
 
 from .config import CurriculumStage, TrainingConfig
 from .conv_model import ConvCompetitionTransformer, calibrate_conv_token_rms
-from .evaluation import evaluate_paired_vs_random
+from .evaluation import evaluate_paired_vs_opponent, evaluate_paired_vs_random
+from .league import aggregate_league_results, make_opponent_policy
 from .model import CompetitionTransformer
 from .observation import augment_observation, init_observation_memory
 from .ppo import compute_gae, ppo_epoch
@@ -124,6 +125,7 @@ def _conv_calibration_observations(config: TrainingConfig, pool):
             current_memory,
             board_mask,
             config.observation_schema,
+            config.deathtouch_turn,
         )
     )(observations, memory, board_masks)
     return augmented
@@ -225,6 +227,108 @@ def _make_evaluator(config: TrainingConfig, environment, n_maps: int, truncation
             observation_schema=config.observation_schema,
         )
     )
+
+
+def _make_opponent_evaluator(
+    config: TrainingConfig,
+    environment,
+    n_maps: int,
+    truncation: int,
+    opponent_name: str,
+):
+    opponent_action = make_opponent_policy(opponent_name)
+    return eqx.filter_jit(
+        lambda pool, network, key: evaluate_paired_vs_opponent(
+            environment,
+            pool,
+            network,
+            key,
+            n_maps,
+            truncation,
+            opponent_action,
+            pad_to=config.pad_to,
+            history_size=config.history_size,
+            temporal_window=config.temporal_window,
+            observation_schema=config.observation_schema,
+        )
+    )
+
+
+def _run_post_training_league(
+    config: TrainingConfig,
+    network,
+    tracker: WandbTracker,
+    run_dir: Path,
+) -> dict:
+    """Evaluate one EMA checkpoint on locked final-stage maps."""
+    stage = config.curriculum[-1]
+    environment = make_environment(
+        config, stage, pool_size=max(config.league_eval_maps, 16)
+    )
+    pool_key = jax.random.PRNGKey(config.league_eval_seed)
+    pool, _ = environment.reset(pool_key)
+    results: dict[str, dict[str, float]] = {}
+
+    for opponent_index, opponent_name in enumerate(config.league_opponents):
+        evaluator = _make_opponent_evaluator(
+            config,
+            environment,
+            config.league_eval_maps,
+            config.truncation,
+            opponent_name,
+        )
+        evaluation_key = jax.random.fold_in(pool_key, opponent_index + 1)
+        evaluation, _ = evaluator(pool, network, evaluation_key)
+        result = {name: float(value) for name, value in evaluation.items()}
+        result["games"] = result["wins"] + result["losses"] + result["draws"]
+        results[opponent_name] = result
+        record = {
+            "iteration": config.num_iterations,
+            **{
+                f"league/{opponent_name}/{name}": value
+                for name, value in result.items()
+            },
+        }
+        _write_metrics(run_dir / "metrics.jsonl", record)
+        tracker.log_evaluation(record)
+        print(
+            f"  league {opponent_name}: {int(result['wins'])}W/"
+            f"{int(result['losses'])}L/{int(result['draws'])}D, "
+            f"score={result['score']:.3f}"
+        )
+
+    aggregate = aggregate_league_results(results)
+    aggregate_record = {
+        "iteration": config.num_iterations,
+        **{f"league/aggregate/{name}": value for name, value in aggregate.items()},
+    }
+    _write_metrics(run_dir / "metrics.jsonl", aggregate_record)
+    tracker.log_evaluation(aggregate_record)
+    payload = {
+        "iteration": config.num_iterations,
+        "seed": config.league_eval_seed,
+        "maps_per_opponent": config.league_eval_maps,
+        "games_per_opponent": 2 * config.league_eval_maps,
+        "opponents": results,
+        "aggregate": aggregate,
+    }
+    (run_dir / "league_results.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    with (run_dir / "league_results.jsonl").open("w", encoding="utf-8") as handle:
+        for opponent_name, result in results.items():
+            handle.write(
+                json.dumps({"opponent": opponent_name, **result}, sort_keys=True) + "\n"
+            )
+        handle.write(
+            json.dumps({"opponent": "aggregate", **aggregate}, sort_keys=True) + "\n"
+        )
+    print(
+        f"  league aggregate: {int(aggregate['wins'])}W/"
+        f"{int(aggregate['losses'])}L/{int(aggregate['draws'])}D, "
+        f"score={aggregate['score']:.3f}, macro={aggregate['macro_score']:.3f}"
+    )
+    return payload
 
 
 def make_prepare_batch(config: TrainingConfig):
@@ -339,9 +443,22 @@ def make_update_shard(config: TrainingConfig, static, optimizer):
     return update_shard
 
 
-def train(config: TrainingConfig, *, resume: str | None = None):
+def train(
+    config: TrainingConfig,
+    *,
+    resume: str | None = None,
+    trace_dir: str | None = None,
+    trace_start_iteration: int = 1,
+    trace_iterations: int = 0,
+):
     """Train the shared AverageJoe-style baseline and return its final state."""
     config.validate()
+    if trace_iterations < 0:
+        raise ValueError("trace_iterations must be non-negative")
+    if trace_iterations and trace_start_iteration <= 0:
+        raise ValueError("trace_start_iteration must be positive")
+    if trace_iterations and not trace_dir:
+        raise ValueError("trace_dir is required when trace_iterations is non-zero")
     run_dir = config.run_dir
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "config.json").write_text(
@@ -391,8 +508,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
                 f"Checkpoint curriculum stage {stage_index} is not present in the config"
             )
         print(
-            f"Resumed {resume} at iteration {start_iteration}, "
-            f"curriculum stage {stage_index}"
+            f"Resumed {resume} at iteration {start_iteration}, curriculum stage {stage_index}"
         )
 
     trainable = eqx.filter(network, eqx.is_inexact_array)
@@ -451,9 +567,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
     ema_parameters = _replicate_for_pmap(ema_parameters)
 
     def sample_initial_states(pool_shard, rng):
-        indices = jax.random.randint(
-            rng, (config.num_envs,), 0, environment.pool_size
-        )
+        indices = jax.random.randint(rng, (config.num_envs,), 0, environment.pool_size)
         sampled = jax.tree.map(lambda value: value[indices], pool_shard)
         return sampled._replace(pool_idx=indices.astype(jnp.int32))
 
@@ -493,7 +607,26 @@ def train(config: TrainingConfig, *, resume: str | None = None):
 
     device_count = jax.device_count()
     train_started = time.perf_counter()
+    trace_active = False
+    trace_stop_iteration = trace_start_iteration + trace_iterations - 1
     for iteration in range(start_iteration, config.num_iterations):
+        iteration_number = iteration + 1
+        if trace_iterations and iteration_number == trace_start_iteration:
+            Path(trace_dir).mkdir(parents=True, exist_ok=True)
+            # Python call tracing is already covered by the isolated cProfile
+            # pass. Keeping it disabled here substantially reduces XPlane
+            # trace volume while preserving device kernels and lightweight
+            # host/XLA launch events.
+            profile_options = jax.profiler.ProfileOptions()
+            profile_options.host_tracer_level = 1
+            profile_options.python_tracer_level = 0
+            profile_options.enable_hlo_proto = False
+            jax.profiler.start_trace(trace_dir, profiler_options=profile_options)
+            trace_active = True
+            print(
+                f"JAX trace started at iteration {iteration_number}; "
+                f"capturing {trace_iterations} iterations to {trace_dir}"
+            )
         iteration_started = time.perf_counter()
         rollout_started = time.perf_counter()
         states, rollout, rollout_keys, memory_zero, memory_one = rollout_pmapped(
@@ -584,6 +717,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
         record = {
             "iteration": iteration + 1,
             "wall_seconds": time.perf_counter() - train_started,
+            "iteration_seconds": iteration_seconds,
             "stage": stage_index,
             "samples_per_second": samples_per_second,
             "episodes": episodes,
@@ -599,6 +733,9 @@ def train(config: TrainingConfig, *, resume: str | None = None):
         if config.debug_timing:
             record["rollout_seconds"] = rollout_seconds
             record["update_seconds"] = update_seconds
+            record["host_seconds"] = max(
+                0.0, iteration_seconds - rollout_seconds - update_seconds
+            )
 
         if (iteration + 1) % config.metrics_every == 0:
             _write_metrics(metrics_path, record)
@@ -614,6 +751,7 @@ def train(config: TrainingConfig, *, resume: str | None = None):
             (iteration + 1) % config.eval_every == 0
         )
         if should_evaluate:
+            evaluation_started = time.perf_counter()
             key, evaluation_key = jax.random.split(key)
             ema_network = eqx.combine(
                 jax.tree.map(lambda value: value[0], ema_parameters), static
@@ -622,6 +760,8 @@ def train(config: TrainingConfig, *, resume: str | None = None):
             evaluation = jax.tree.map(float, evaluation)
             evaluation_record = {
                 "iteration": iteration + 1,
+                "performance/evaluation_seconds": time.perf_counter()
+                - evaluation_started,
                 **{f"evaluation/{name}": value for name, value in evaluation.items()},
             }
             _write_metrics(metrics_path, evaluation_record)
@@ -656,7 +796,9 @@ def train(config: TrainingConfig, *, resume: str | None = None):
                         config, stage, pool_size=eval_pool_size
                     )
                     key, evaluation_pool_key = jax.random.split(key)
-                    evaluation_pool, _ = evaluation_environment.reset(evaluation_pool_key)
+                    evaluation_pool, _ = evaluation_environment.reset(
+                        evaluation_pool_key
+                    )
                     evaluator = _make_evaluator(
                         config,
                         evaluation_environment,
@@ -668,11 +810,21 @@ def train(config: TrainingConfig, *, resume: str | None = None):
             config.reset_pool_every > 0
             and (iteration + 1) % config.reset_pool_every == 0
         ):
+            pool_reset_started = time.perf_counter()
             key, pool_key = jax.random.split(key)
             pool, _ = environment.reset(pool_key)
             pool_replicated = _replicate_for_pmap(pool)
+            if config.debug_timing:
+                timing_record = {
+                    "iteration": iteration + 1,
+                    "performance/pool_reset_seconds": time.perf_counter()
+                    - pool_reset_started,
+                }
+                _write_metrics(metrics_path, timing_record)
+                tracker.log_evaluation(timing_record)
 
         if (iteration + 1) % config.checkpoint_every == 0:
+            checkpoint_started = time.perf_counter()
             current_network = eqx.combine(
                 jax.tree.map(lambda value: value[0], parameters), static
             )
@@ -702,10 +854,28 @@ def train(config: TrainingConfig, *, resume: str | None = None):
                 key,
             )
             print(f"  saved {checkpoint}")
+            if config.debug_timing:
+                timing_record = {
+                    "iteration": iteration + 1,
+                    "performance/checkpoint_seconds": time.perf_counter()
+                    - checkpoint_started,
+                }
+                _write_metrics(metrics_path, timing_record)
+                tracker.log_evaluation(timing_record)
 
         del rollout, batch, observations, histories, masks, actions, old_log_probs
         del values, next_values, rewards, terminated, truncated, winners
         del advantages, returns, sample_indices
+
+        if trace_active and iteration_number == trace_stop_iteration:
+            jax.block_until_ready(parameters)
+            jax.profiler.stop_trace()
+            trace_active = False
+            print(f"JAX trace stopped after iteration {iteration_number}")
+
+    if trace_active:
+        jax.block_until_ready(parameters)
+        jax.profiler.stop_trace()
 
     final_network = eqx.combine(
         jax.tree.map(lambda value: value[0], parameters), static
@@ -723,6 +893,8 @@ def train(config: TrainingConfig, *, resume: str | None = None):
         stage_index,
         key,
     )
+    if config.league_eval_after_training:
+        _run_post_training_league(config, final_ema_network, tracker, run_dir)
     tracker.finish()
     return final_network, final_optimizer_state, final_ema_network
 
@@ -734,7 +906,24 @@ def parse_args():
         default="generals/training/configs/competition_l7.toml",
         help="Path to a TOML TrainingConfig",
     )
-    parser.add_argument("--resume", help="Path to a checkpoint produced by this trainer")
+    parser.add_argument(
+        "--resume", help="Path to a checkpoint produced by this trainer"
+    )
+    parser.add_argument(
+        "--trace-dir", help="Optional JAX/XPlane trace output directory"
+    )
+    parser.add_argument(
+        "--trace-start-iteration",
+        type=int,
+        default=1,
+        help="One-based iteration at which tracing starts",
+    )
+    parser.add_argument(
+        "--trace-iterations",
+        type=int,
+        default=0,
+        help="Number of iterations to capture; zero disables tracing",
+    )
     return parser.parse_args()
 
 
@@ -749,7 +938,13 @@ def main():
         )
     args = parse_args()
     config = TrainingConfig.from_toml(args.config)
-    train(config, resume=args.resume)
+    train(
+        config,
+        resume=args.resume,
+        trace_dir=args.trace_dir,
+        trace_start_iteration=args.trace_start_iteration,
+        trace_iterations=args.trace_iterations,
+    )
 
 
 if __name__ == "__main__":

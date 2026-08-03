@@ -191,10 +191,10 @@ Register at [generals.io](https://generals.io) to get your user ID.
 
 The repository includes a data-parallel PPO implementation of two matched
 7-layer AverageJoe-style models trained from scratch on the versioned
-`competition_36` observation schema:
+`competition_39` observation schema:
 
-- A 15.34M-parameter pure patch transformer.
-- A 16.13M-parameter variant with an overlapping convolutional stem added to
+- A 15.35M-parameter pure patch transformer.
+- A 16.14M-parameter variant with an overlapping convolutional stem added to
   the patch tokens before transformer block 1.
 
 The convolutional branch is initialized from 512 generated two-seat

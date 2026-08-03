@@ -1,0 +1,48 @@
+{
+  "candidate": "human_exe",
+  "seed": 20260805,
+  "maps_per_opponent": 4,
+  "games_per_opponent": 8,
+  "truncation": 1200,
+  "opponents": {
+    "boss": {
+      "draws": 0.0,
+      "losses": 7.0,
+      "mean_finish_turn": 677.25,
+      "paired_score_std": 0.21650634706020355,
+      "score": 0.125,
+      "wins": 1.0,
+      "games": 8,
+      "elapsed_seconds": 46.87343295942992
+    },
+    "hunter": {
+      "draws": 0.0,
+      "losses": 5.0,
+      "mean_finish_turn": 741.25,
+      "paired_score_std": 0.21650634706020355,
+      "score": 0.375,
+      "wins": 3.0,
+      "games": 8,
+      "elapsed_seconds": 37.351487000472844
+    },
+    "harvester": {
+      "draws": 0.0,
+      "losses": 4.0,
+      "mean_finish_turn": 665.875,
+      "paired_score_std": 0.3535533845424652,
+      "score": 0.5,
+      "wins": 4.0,
+      "games": 8,
+      "elapsed_seconds": 39.923202625475824
+    }
+  },
+  "aggregate": {
+    "wins": 8.0,
+    "losses": 16.0,
+    "draws": 0.0,
+    "games": 24,
+    "score": 0.3333333333333333,
+    "macro_score": 0.3333333333333333
+  },
+  "elapsed_seconds": 125.08928945846856
+}

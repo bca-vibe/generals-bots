@@ -14,7 +14,7 @@ from generals.training.ppo import compute_gae
     ("observation_schema", "input_channels"),
     [
         (LEGACY_OBSERVATION_SCHEMA, 38),
-        (COMPETITION_OBSERVATION_SCHEMA, 36),
+        (COMPETITION_OBSERVATION_SCHEMA, 39),
     ],
 )
 def test_model_shapes_and_canonical_pass(observation_schema, input_channels):

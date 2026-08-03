@@ -1,0 +1,118 @@
+{
+  "candidate": "boss",
+  "seed": 20260804,
+  "maps_per_opponent": 16,
+  "games_per_opponent": 32,
+  "truncation": 1200,
+  "opponents": {
+    "random": {
+      "draws": 0.0,
+      "losses": 0.0,
+      "mean_finish_turn": 206.40625,
+      "paired_score_std": 0.0,
+      "score": 1.0,
+      "wins": 32.0,
+      "games": 32,
+      "elapsed_seconds": 69.75716762524098
+    },
+    "expander": {
+      "draws": 0.0,
+      "losses": 0.0,
+      "mean_finish_turn": 413.5,
+      "paired_score_std": 0.0,
+      "score": 1.0,
+      "wins": 32.0,
+      "games": 32,
+      "elapsed_seconds": 70.45218208432198
+    },
+    "hunter": {
+      "draws": 0.0,
+      "losses": 2.0,
+      "mean_finish_turn": 480.125,
+      "paired_score_std": 0.16535945236682892,
+      "score": 0.9375,
+      "wins": 30.0,
+      "games": 32,
+      "elapsed_seconds": 93.4077973337844
+    },
+    "harvester": {
+      "draws": 0.0,
+      "losses": 2.0,
+      "mean_finish_turn": 477.65625,
+      "paired_score_std": 0.16535945236682892,
+      "score": 0.9375,
+      "wins": 30.0,
+      "games": 32,
+      "elapsed_seconds": 102.67521599959582
+    },
+    "castle_economist": {
+      "draws": 0.0,
+      "losses": 0.0,
+      "mean_finish_turn": 176.34375,
+      "paired_score_std": 0.0,
+      "score": 1.0,
+      "wins": 32.0,
+      "games": 32,
+      "elapsed_seconds": 78.08595550060272
+    },
+    "deathtouch_clock": {
+      "draws": 0.0,
+      "losses": 0.0,
+      "mean_finish_turn": 274.375,
+      "paired_score_std": 0.0,
+      "score": 1.0,
+      "wins": 32.0,
+      "games": 32,
+      "elapsed_seconds": 119.45696124993265
+    },
+    "draw_grinder": {
+      "draws": 0.0,
+      "losses": 0.0,
+      "mean_finish_turn": 298.5,
+      "paired_score_std": 0.0,
+      "score": 1.0,
+      "wins": 32.0,
+      "games": 32,
+      "elapsed_seconds": 84.09844987560064
+    },
+    "fog_scout": {
+      "draws": 0.0,
+      "losses": 0.0,
+      "mean_finish_turn": 291.4375,
+      "paired_score_std": 0.0,
+      "score": 1.0,
+      "wins": 32.0,
+      "games": 32,
+      "elapsed_seconds": 67.78048433270305
+    },
+    "raider": {
+      "draws": 1.0,
+      "losses": 3.0,
+      "mean_finish_turn": 469.125,
+      "paired_score_std": 0.19702374935150146,
+      "score": 0.890625,
+      "wins": 28.0,
+      "games": 32,
+      "elapsed_seconds": 107.47337079234421
+    },
+    "sentinel": {
+      "draws": 0.0,
+      "losses": 0.0,
+      "mean_finish_turn": 341.59375,
+      "paired_score_std": 0.0,
+      "score": 1.0,
+      "wins": 32.0,
+      "games": 32,
+      "elapsed_seconds": 117.66895212512463
+    }
+  },
+  "aggregate": {
+    "wins": 312.0,
+    "losses": 7.0,
+    "draws": 1.0,
+    "games": 320,
+    "score": 0.9765625,
+    "macro_score": 0.9765625
+  },
+  "elapsed_seconds": 913.7034384999424
+}

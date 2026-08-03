@@ -26,7 +26,7 @@ def test_final_training_stage_matches_competition_map_parameters_and_boards():
     config = TrainingConfig.from_toml(CONFIG)
     assert config.observation_schema == COMPETITION_OBSERVATION_SCHEMA
     assert config.model_architecture == "transformer"
-    assert config.input_channels == 36
+    assert config.input_channels == 39
     training = make_environment(config, config.curriculum[-1], pool_size=1)
     reference = GeneralsEnv(mode="competition", pool_size=1)
 

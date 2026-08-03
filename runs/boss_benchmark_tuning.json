@@ -1,0 +1,78 @@
+{
+  "candidate": "boss",
+  "seed": 20260802,
+  "maps_per_opponent": 16,
+  "games_per_opponent": 32,
+  "truncation": 1200,
+  "opponents": {
+    "expander": {
+      "draws": 1.0,
+      "losses": 2.0,
+      "mean_finish_turn": 521.46875,
+      "paired_score_std": 0.24556614458560944,
+      "score": 0.921875,
+      "wins": 29.0,
+      "games": 32,
+      "elapsed_seconds": 67.72387291770428
+    },
+    "harvester": {
+      "draws": 1.0,
+      "losses": 15.0,
+      "mean_finish_turn": 743.03125,
+      "paired_score_std": 0.37985143065452576,
+      "score": 0.515625,
+      "wins": 16.0,
+      "games": 32,
+      "elapsed_seconds": 103.53111729212105
+    },
+    "castle_economist": {
+      "draws": 2.0,
+      "losses": 0.0,
+      "mean_finish_turn": 298.15625,
+      "paired_score_std": 0.08267972618341446,
+      "score": 0.96875,
+      "wins": 30.0,
+      "games": 32,
+      "elapsed_seconds": 79.32600458338857
+    },
+    "deathtouch_clock": {
+      "draws": 0.0,
+      "losses": 0.0,
+      "mean_finish_turn": 327.9375,
+      "paired_score_std": 0.0,
+      "score": 1.0,
+      "wins": 32.0,
+      "games": 32,
+      "elapsed_seconds": 124.1795875839889
+    },
+    "fog_scout": {
+      "draws": 0.0,
+      "losses": 0.0,
+      "mean_finish_turn": 316.09375,
+      "paired_score_std": 0.0,
+      "score": 1.0,
+      "wins": 32.0,
+      "games": 32,
+      "elapsed_seconds": 68.30180683359504
+    },
+    "raider": {
+      "draws": 0.0,
+      "losses": 8.0,
+      "mean_finish_turn": 656.125,
+      "paired_score_std": 0.3535533845424652,
+      "score": 0.75,
+      "wins": 24.0,
+      "games": 32,
+      "elapsed_seconds": 104.27150820940733
+    }
+  },
+  "aggregate": {
+    "wins": 163.0,
+    "losses": 25.0,
+    "draws": 4.0,
+    "games": 192,
+    "score": 0.859375,
+    "macro_score": 0.859375
+  },
+  "elapsed_seconds": 548.8235494159162
+}

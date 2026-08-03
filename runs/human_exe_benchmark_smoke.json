@@ -1,0 +1,88 @@
+{
+  "candidate": "human_exe",
+  "seed": 20260805,
+  "maps_per_opponent": 4,
+  "games_per_opponent": 8,
+  "truncation": 1200,
+  "opponents": {
+    "boss": {
+      "draws": 0.0,
+      "losses": 7.0,
+      "mean_finish_turn": 482.625,
+      "paired_score_std": 0.21650634706020355,
+      "score": 0.125,
+      "wins": 1.0,
+      "games": 8,
+      "elapsed_seconds": 47.75254875048995
+    },
+    "expander": {
+      "draws": 2.0,
+      "losses": 1.0,
+      "mean_finish_turn": 714.25,
+      "paired_score_std": 0.1767766922712326,
+      "score": 0.75,
+      "wins": 5.0,
+      "games": 8,
+      "elapsed_seconds": 31.56610104162246
+    },
+    "hunter": {
+      "draws": 1.0,
+      "losses": 5.0,
+      "mean_finish_turn": 596.25,
+      "paired_score_std": 0.20728905498981476,
+      "score": 0.3125,
+      "wins": 2.0,
+      "games": 8,
+      "elapsed_seconds": 37.3578493334353
+    },
+    "harvester": {
+      "draws": 0.0,
+      "losses": 7.0,
+      "mean_finish_turn": 594.125,
+      "paired_score_std": 0.21650634706020355,
+      "score": 0.125,
+      "wins": 1.0,
+      "games": 8,
+      "elapsed_seconds": 42.654869416728616
+    },
+    "fog_scout": {
+      "draws": 2.0,
+      "losses": 0.0,
+      "mean_finish_turn": 621.625,
+      "paired_score_std": 0.21650634706020355,
+      "score": 0.875,
+      "wins": 6.0,
+      "games": 8,
+      "elapsed_seconds": 29.141323583200574
+    },
+    "raider": {
+      "draws": 0.0,
+      "losses": 1.0,
+      "mean_finish_turn": 552.0,
+      "paired_score_std": 0.21650634706020355,
+      "score": 0.875,
+      "wins": 7.0,
+      "games": 8,
+      "elapsed_seconds": 39.37479508295655
+    },
+    "sentinel": {
+      "draws": 3.0,
+      "losses": 0.0,
+      "mean_finish_turn": 821.625,
+      "paired_score_std": 0.20728905498981476,
+      "score": 0.8125,
+      "wins": 5.0,
+      "games": 8,
+      "elapsed_seconds": 41.958380999974906
+    }
+  },
+  "aggregate": {
+    "wins": 27.0,
+    "losses": 21.0,
+    "draws": 8.0,
+    "games": 56,
+    "score": 0.5535714285714286,
+    "macro_score": 0.5535714285714286
+  },
+  "elapsed_seconds": 271.4894659584388
+}

@@ -14,6 +14,22 @@ from .observation import (
 )
 
 MODEL_ARCHITECTURES = frozenset(("transformer", "conv_transformer"))
+LEAGUE_OPPONENTS = frozenset(
+    (
+        "random",
+        "boss",
+        "expander",
+        "hunter",
+        "harvester",
+        "human_exe",
+        "castle_economist",
+        "deathtouch_clock",
+        "draw_grinder",
+        "fog_scout",
+        "raider",
+        "sentinel",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -55,7 +71,7 @@ class TrainingConfig:
     history_size: int = 7
     temporal_window: int = 512
     # Legacy is the safe default for historical TOMLs that predate schema
-    # versioning. New training configs opt into competition_36 explicitly.
+    # versioning. New training configs opt into competition_39 explicitly.
     observation_schema: str = LEGACY_OBSERVATION_SCHEMA
     model_architecture: str = "transformer"
     depth: int = 7
@@ -106,6 +122,12 @@ class TrainingConfig:
     eval_games: int = 512
     checkpoint_every: int = 500
     metrics_every: int = 1
+    # Optional post-training benchmark. Unlike the random-policy curriculum
+    # gate, the league always uses the final competition map-distance stage.
+    league_eval_after_training: bool = False
+    league_eval_maps: int = 256
+    league_eval_seed: int = 1044
+    league_opponents: tuple[str, ...] = ()
     # Insert device barriers to time rollout/update phases separately. Costs
     # throughput (serializes host glue with device work) - profiling runs only.
     debug_timing: bool = False
@@ -141,6 +163,8 @@ class TrainingConfig:
             data["curriculum"] = tuple(CurriculumStage(**stage) for stage in data["curriculum"])
         if "wandb_tags" in data:
             data["wandb_tags"] = tuple(data["wandb_tags"])
+        if "league_opponents" in data:
+            data["league_opponents"] = tuple(data["league_opponents"])
         config = cls(**data)
         config.validate()
         return config
@@ -152,6 +176,24 @@ class TrainingConfig:
                 raise ValueError(f"{name} must be non-empty when specified")
         if any(not tag.strip() for tag in self.wandb_tags):
             raise ValueError("wandb_tags cannot contain empty values")
+        if self.num_iterations <= 0:
+            raise ValueError("num_iterations must be positive")
+        if self.eval_every < 0 or self.checkpoint_every <= 0 or self.metrics_every <= 0:
+            raise ValueError(
+                "eval_every must be non-negative; checkpoint_every and metrics_every "
+                "must be positive"
+            )
+        if self.league_eval_maps <= 0:
+            raise ValueError("league_eval_maps must be positive")
+        unknown_opponents = sorted(set(self.league_opponents) - LEAGUE_OPPONENTS)
+        if unknown_opponents:
+            raise ValueError(f"Unknown league opponents: {unknown_opponents}")
+        if len(set(self.league_opponents)) != len(self.league_opponents):
+            raise ValueError("league_opponents cannot contain duplicates")
+        if self.league_eval_after_training and not self.league_opponents:
+            raise ValueError(
+                "league_opponents must be non-empty when league evaluation is enabled"
+            )
         if self.pad_to != 21:
             raise ValueError("The competition baseline is intentionally fixed to pad_to=21")
         if self.observation_schema not in OBSERVATION_SCHEMAS:
@@ -166,7 +208,7 @@ class TrainingConfig:
             self.model_architecture == "conv_transformer"
             and self.observation_schema != COMPETITION_OBSERVATION_SCHEMA
         ):
-            raise ValueError("conv_transformer requires observation_schema='competition_36'")
+            raise ValueError("conv_transformer requires observation_schema='competition_39'")
         if self.conv_channels <= 0 or self.conv_groups <= 0:
             raise ValueError("conv_channels and conv_groups must be positive")
         if self.conv_channels % self.conv_groups:

@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 from generals.core.action import compute_valid_move_mask
 from generals.core.observation import Observation
-from generals.modifiers.build_castles import BASE_COST, PROXIMITY_DECAY, PROXIMITY_PENALTY
+from generals.modifiers.build_castles import build_cost_grid_from_structures
 
 BOARD_SIZE = 21
 CELL_COUNT = BOARD_SIZE * BOARD_SIZE
@@ -15,36 +15,21 @@ MOVE_PLANES = 8
 SPATIAL_PLANES = 9  # eight movement planes plus build
 PASS_INDEX = SPATIAL_PLANES * CELL_COUNT
 ACTION_COUNT = PASS_INDEX + 1
-_BUILD_RADIUS = (PROXIMITY_PENALTY - 1) // PROXIMITY_DECAY
 
 
 def build_cost_grid_from_observation(observation: Observation) -> jax.Array:
     """Compute the exact price of building at every cell from legal information."""
     own_structures = (
-        (observation.generals | observation.castles) & observation.owned_cells
-    ).astype(jnp.int32)
-    padded = jnp.pad(own_structures, _BUILD_RADIUS)
-    height, width = own_structures.shape
-    cost = jnp.full((height, width), BASE_COST, dtype=jnp.int32)
-    for row_offset in range(-_BUILD_RADIUS, _BUILD_RADIUS + 1):
-        for col_offset in range(-_BUILD_RADIUS, _BUILD_RADIUS + 1):
-            surcharge = PROXIMITY_PENALTY - PROXIMITY_DECAY * (
-                abs(row_offset) + abs(col_offset)
-            )
-            if surcharge > 0:
-                shifted = padded[
-                    _BUILD_RADIUS + row_offset : _BUILD_RADIUS + row_offset + height,
-                    _BUILD_RADIUS + col_offset : _BUILD_RADIUS + col_offset + width,
-                ]
-                cost = cost + surcharge * shifted
-    return cost
+        observation.generals | observation.castles
+    ) & observation.owned_cells
+    return build_cost_grid_from_structures(own_structures)
 
 
 def legal_build_mask(observation: Observation) -> jax.Array:
-    plain_owned = (
-        observation.owned_cells & ~observation.generals & ~observation.castles
+    plain_owned = observation.owned_cells & ~observation.generals & ~observation.castles
+    return plain_owned & (
+        observation.armies >= build_cost_grid_from_observation(observation)
     )
-    return plain_owned & (observation.armies >= build_cost_grid_from_observation(observation))
 
 
 def legal_action_mask(
@@ -52,7 +37,9 @@ def legal_action_mask(
 ) -> jax.Array:
     """Return the canonical boolean action mask with shape ``(3970,)``."""
     if observation.armies.shape != (BOARD_SIZE, BOARD_SIZE):
-        raise ValueError(f"Expected a padded 21x21 observation, got {observation.armies.shape}")
+        raise ValueError(
+            f"Expected a padded 21x21 observation, got {observation.armies.shape}"
+        )
     if board_mask is None:
         board_mask = jnp.ones_like(observation.mountains, dtype=jnp.bool_)
     movement = compute_valid_move_mask(
@@ -77,8 +64,13 @@ def decode_action(index: jax.Array) -> jax.Array:
     direction = spatial_plane % 4
     kind = jnp.where(is_pass, 1, jnp.where(is_build, 2, 0))
     return jnp.array(
-        [kind, jnp.where(is_pass, 0, row), jnp.where(is_pass, 0, col),
-         jnp.where(is_pass | is_build, 0, direction), is_half.astype(jnp.int32)],
+        [
+            kind,
+            jnp.where(is_pass, 0, row),
+            jnp.where(is_pass, 0, col),
+            jnp.where(is_pass | is_build, 0, direction),
+            is_half.astype(jnp.int32),
+        ],
         dtype=jnp.int32,
     )
 

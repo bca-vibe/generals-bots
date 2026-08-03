@@ -8,22 +8,28 @@ import jax
 import jax.numpy as jnp
 
 from generals.core.observation import Observation
+from generals.modifiers.build_castles import build_cost_grid_from_structures
 
 LEGACY_OBSERVATION_SCHEMA = "legacy_38"
-COMPETITION_OBSERVATION_SCHEMA = "competition_36"
+COMPETITION_OBSERVATION_SCHEMA = "competition_39"
 OBSERVATION_SCHEMAS = frozenset(
     (LEGACY_OBSERVATION_SCHEMA, COMPETITION_OBSERVATION_SCHEMA)
 )
+COMPETITION_RULE_CHANNEL_NAMES = (
+    "deathtouch_active",
+    "deathtouch_countdown",
+    "build_cost",
+)
+DEATHTOUCH_COUNTDOWN_TURNS = 200.0
 
 
 def observation_channel_count(observation_schema: str, history_size: int) -> int:
     """Return the spatial input width for one versioned observation schema."""
     if observation_schema not in OBSERVATION_SCHEMAS:
         raise ValueError(
-            f"Unknown observation schema {observation_schema!r}; "
-            f"expected one of {sorted(OBSERVATION_SCHEMAS)}"
+            f"Unknown observation schema {observation_schema!r}; expected one of {sorted(OBSERVATION_SCHEMAS)}"
         )
-    base_channels = 24 if observation_schema == LEGACY_OBSERVATION_SCHEMA else 22
+    base_channels = 24 if observation_schema == LEGACY_OBSERVATION_SCHEMA else 25
     return base_channels + 2 * history_size
 
 
@@ -78,12 +84,12 @@ def augment_observation(
     memory: ObservationMemory,
     board_mask: jax.Array | None = None,
     observation_schema: str = LEGACY_OBSERVATION_SCHEMA,
+    deathtouch_turn: int = 800,
 ) -> tuple[jax.Array, ObservationMemory]:
     """Create a versioned spatial input and update deterministic episode memory."""
     if observation_schema not in OBSERVATION_SCHEMAS:
         raise ValueError(
-            f"Unknown observation schema {observation_schema!r}; "
-            f"expected one of {sorted(OBSERVATION_SCHEMAS)}"
+            f"Unknown observation schema {observation_schema!r}; expected one of {sorted(OBSERVATION_SCHEMAS)}"
         )
     if board_mask is None:
         board_mask = jnp.ones_like(observation.armies, dtype=jnp.bool_)
@@ -98,9 +104,8 @@ def augment_observation(
     enemy_deltas = jnp.concatenate([enemy_delta[None], memory.enemy_army_deltas[:-1]])
 
     visible = (
-        (~observation.fog_cells & ~observation.structures_in_fog & board_mask)
-        | padding
-    )
+        ~observation.fog_cells & ~observation.structures_in_fog & board_mask
+    ) | padding
     ever_seen = memory.ever_seen | visible
     ever_seen_enemy = memory.ever_seen_enemy | _dilate_3x3(observation.opponent_cells)
     # The interface distinguishes ordinary fog from structures in fog. Therefore
@@ -123,15 +128,11 @@ def augment_observation(
         # mountain. Conversely, ordinary fog is positive plain evidence, so a
         # structure that later appears there can only be a newly built castle.
         initial_fogged_mountains = (
-            observation.structures_in_fog
-            & ~memory.ever_plain
-            & ~memory.known_castles
+            observation.structures_in_fog & ~memory.ever_plain & ~memory.known_castles
         )
         known_mountains = known_mountains | initial_fogged_mountains
     inferred_castles = (
-        observation.structures_in_fog
-        & memory.ever_plain
-        & ~known_mountains
+        observation.structures_in_fog & memory.ever_plain & ~known_mountains
     )
     known_castles = memory.known_castles | observation.castles
     if observation_schema == COMPETITION_OBSERVATION_SCHEMA:
@@ -147,11 +148,15 @@ def augment_observation(
         enemy_visible, 0.0, memory.last_seen_enemy_age + 1.0
     )
 
-    opponent_army_history = jnp.roll(memory.opponent_army_history, -1).at[-1].set(
-        observation.opponent_army_count
+    opponent_army_history = (
+        jnp.roll(memory.opponent_army_history, -1)
+        .at[-1]
+        .set(observation.opponent_army_count)
     )
-    opponent_land_history = jnp.roll(memory.opponent_land_history, -1).at[-1].set(
-        observation.opponent_land_count
+    opponent_land_history = (
+        jnp.roll(memory.opponent_land_history, -1)
+        .at[-1]
+        .set(observation.opponent_land_count)
     )
 
     height, width = observation.armies.shape
@@ -190,6 +195,8 @@ def augment_observation(
     if observation_schema == LEGACY_OBSERVATION_SCHEMA:
         common_channels.insert(3, armies * observation.neutral_cells)
         common_channels.insert(13, observation.structures_in_fog & board_mask)
+    else:
+        common_channels.extend(competition_rule_channels(observation, deathtouch_turn))
     channels = jnp.stack(
         common_channels,
         axis=0,
@@ -215,8 +222,11 @@ def augment_observation(
     return augmented, new_memory
 
 
-def reset_finished_memory(memory: ObservationMemory, finished: jax.Array) -> ObservationMemory:
+def reset_finished_memory(
+    memory: ObservationMemory, finished: jax.Array
+) -> ObservationMemory:
     """Zero batched memory leaves for environments that auto-reset."""
+
     def reset_leaf(leaf):
         condition = finished.reshape(finished.shape + (1,) * (leaf.ndim - 1))
         return jnp.where(condition, jnp.zeros_like(leaf), leaf)
@@ -225,7 +235,9 @@ def reset_finished_memory(memory: ObservationMemory, finished: jax.Array) -> Obs
 
 
 def temporal_input(memory: ObservationMemory) -> jax.Array:
-    return jnp.stack([memory.opponent_army_history, memory.opponent_land_history], axis=-2)
+    return jnp.stack(
+        [memory.opponent_army_history, memory.opponent_land_history], axis=-2
+    )
 
 
 def normalize_augmented_observation(
@@ -239,11 +251,33 @@ def normalize_augmented_observation(
         )
     elif observation_schema == COMPETITION_OBSERVATION_SCHEMA:
         scaled_channels = jnp.array(
-            [0, 1, 2, 12, 14, 15, 16, 17, 18, *range(22, observation.shape[0])]
+            [0, 1, 2, 12, 14, 15, 16, 17, 18, 24, *range(25, observation.shape[0])]
         )
     else:
         raise ValueError(
-            f"Unknown observation schema {observation_schema!r}; "
-            f"expected one of {sorted(OBSERVATION_SCHEMAS)}"
+            f"Unknown observation schema {observation_schema!r}; expected one of {sorted(OBSERVATION_SCHEMAS)}"
         )
     return observation.at[scaled_channels].divide(50.0)
+
+
+def competition_rule_channels(
+    observation: Observation, deathtouch_turn: int
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Return deathtouch phase, countdown, and exact castle price maps."""
+    timestep = observation.timestep.astype(jnp.float32)
+    shape = observation.armies.shape
+    active = jnp.broadcast_to((timestep >= deathtouch_turn).astype(jnp.float32), shape)
+    countdown = jnp.broadcast_to(
+        jnp.clip(
+            (jnp.asarray(deathtouch_turn, dtype=jnp.float32) - timestep)
+            / DEATHTOUCH_COUNTDOWN_TURNS,
+            0.0,
+            1.0,
+        ),
+        shape,
+    )
+    own_structures = (
+        observation.generals | observation.castles
+    ) & observation.owned_cells
+    build_cost = build_cost_grid_from_structures(own_structures).astype(jnp.float32)
+    return active, countdown, build_cost

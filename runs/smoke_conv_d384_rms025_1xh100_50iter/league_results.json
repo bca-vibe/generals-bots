@@ -1,0 +1,96 @@
+{
+  "aggregate": {
+    "draws": 3752.0,
+    "games": 5120.0,
+    "losses": 1368.0,
+    "macro_score": 0.36640625,
+    "score": 0.36640625,
+    "wins": 0.0
+  },
+  "games_per_opponent": 512,
+  "iteration": 50,
+  "maps_per_opponent": 256,
+  "opponents": {
+    "castle_economist": {
+      "draws": 511.0,
+      "games": 512.0,
+      "losses": 1.0,
+      "paired_score_std": 0.015594452619552612,
+      "score": 0.4990234375,
+      "wins": 0.0
+    },
+    "deathtouch_clock": {
+      "draws": 430.0,
+      "games": 512.0,
+      "losses": 82.0,
+      "paired_score_std": 0.18069308996200562,
+      "score": 0.419921875,
+      "wins": 0.0
+    },
+    "draw_grinder": {
+      "draws": 512.0,
+      "games": 512.0,
+      "losses": 0.0,
+      "paired_score_std": 0.0,
+      "score": 0.5,
+      "wins": 0.0
+    },
+    "expander": {
+      "draws": 335.0,
+      "games": 512.0,
+      "losses": 177.0,
+      "paired_score_std": 0.17302250862121582,
+      "score": 0.3271484375,
+      "wins": 0.0
+    },
+    "fog_scout": {
+      "draws": 506.0,
+      "games": 512.0,
+      "losses": 6.0,
+      "paired_score_std": 0.03782210126519203,
+      "score": 0.494140625,
+      "wins": 0.0
+    },
+    "harvester": {
+      "draws": 4.0,
+      "games": 512.0,
+      "losses": 508.0,
+      "paired_score_std": 0.03807341307401657,
+      "score": 0.00390625,
+      "wins": 0.0
+    },
+    "hunter": {
+      "draws": 4.0,
+      "games": 512.0,
+      "losses": 508.0,
+      "paired_score_std": 0.03807341307401657,
+      "score": 0.00390625,
+      "wins": 0.0
+    },
+    "raider": {
+      "draws": 427.0,
+      "games": 512.0,
+      "losses": 85.0,
+      "paired_score_std": 0.18539004027843475,
+      "score": 0.4169921875,
+      "wins": 0.0
+    },
+    "random": {
+      "draws": 512.0,
+      "games": 512.0,
+      "losses": 0.0,
+      "paired_score_std": 0.0,
+      "score": 0.5,
+      "wins": 0.0
+    },
+    "sentinel": {
+      "draws": 511.0,
+      "games": 512.0,
+      "losses": 1.0,
+      "paired_score_std": 0.015594452619552612,
+      "score": 0.4990234375,
+      "wins": 0.0
+    }
+  },
+  "seed": 1044
+}
