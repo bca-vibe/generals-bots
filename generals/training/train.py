@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import shutil
+import signal
 import time
 from dataclasses import asdict
 from functools import partial
@@ -15,13 +18,19 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from jax.sharding import Mesh, NamedSharding
+from jax.sharding import PartitionSpec as P
 
 from generals.core.env import GeneralsEnv
 from generals.core.game import get_observation
 
 from .config import CurriculumStage, TrainingConfig
 from .conv_model import ConvCompetitionTransformer, calibrate_conv_token_rms
-from .evaluation import evaluate_paired_vs_opponent, evaluate_paired_vs_random
+from .evaluation import (
+    evaluate_paired_networks,
+    evaluate_paired_vs_opponent,
+    evaluate_paired_vs_random,
+)
 from .league import aggregate_league_results, make_opponent_policy
 from .model import CompetitionTransformer
 from .observation import augment_observation, init_observation_memory
@@ -132,10 +141,68 @@ def _conv_calibration_observations(config: TrainingConfig, pool):
 
 
 def _replicate_for_pmap(tree):
-    """Add a leading device axis; pmap shards that axis across accelerators."""
-    device_count = jax.device_count()
+    """Stage replicas on the host, then place one leading-axis shard per device.
+
+    ``jnp.broadcast_to`` stages the full stacked value on JAX's default device
+    before pmap reshards it.  Large environment pools can therefore exhaust the
+    first GPU while the other devices still have substantial headroom.
+    """
+    devices = np.asarray(jax.local_devices())
+    device_count = len(devices)
+    sharding = NamedSharding(Mesh(devices, ("pmap_devices",)), P("pmap_devices"))
+
+    def replicate(value):
+        host_value = np.asarray(jax.device_get(value))
+        host_replicas = np.stack([host_value] * device_count)
+        return jax.device_put(host_replicas, sharding)
+
+    return jax.tree.map(replicate, tree)
+
+
+def _reset_replicated_pool(environment: GeneralsEnv, key):
+    """Generate the same pool directly on every pmap device.
+
+    Building the full pool eagerly first materializes it on GPU 0.  Even after
+    replication and deletion, XLA's BFC allocator retains that extra chunk,
+    leaving GPU 0 without enough physical headroom for cuBLAS and the first PPO
+    update.  Resetting under pmap places exactly one identical pool replica on
+    each device and never creates the additional GPU-0 copy.
+    """
+    devices = np.asarray(jax.local_devices())
+    device_count = len(devices)
+    sharding = NamedSharding(Mesh(devices, ("pmap_devices",)), P("pmap_devices"))
+    host_key = np.asarray(jax.device_get(key))
+    host_keys = np.stack([host_key] * device_count)
+    device_keys = jax.device_put(host_keys, sharding)
+    return jax.pmap(lambda shard_key: environment.reset(shard_key)[0])(device_keys)
+
+
+def _first_pmap_replica_slice(tree, count: int):
+    """Return a small device-resident slice from replica zero."""
+
+    def first_slice(value):
+        shard = value.addressable_shards[0].data
+        if shard.ndim and shard.shape[0] == 1:
+            shard = shard[0]
+        return shard[:count]
+
+    return jax.tree.map(first_slice, tree)
+
+
+def _first_pmap_replica_to_host(tree):
+    """Copy replica zero to host without gathering the global sharded array."""
+
+    def first(value):
+        if not isinstance(value, jax.Array):
+            return value
+        shard = value.addressable_shards[0].data
+        if shard.ndim and shard.shape[0] == 1:
+            shard = shard[0]
+        return np.asarray(jax.device_get(shard))
+
     return jax.tree.map(
-        lambda value: jnp.broadcast_to(value, (device_count, *value.shape)), tree
+        first,
+        tree,
     )
 
 
@@ -176,6 +243,103 @@ def _write_metrics(path: Path, metrics: dict) -> None:
         handle.write(json.dumps(metrics, sort_keys=True) + "\n")
 
 
+def _write_json_atomic(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(
+        json.dumps(value, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    os.replace(temporary, path)
+
+
+def _request_checkpoint_publication(run_dir: Path, metadata: dict) -> dict:
+    """Publish a durable handoff record without waiting for any network upload."""
+    record = {
+        "event": "requested",
+        "iteration": int(metadata["iteration"]),
+        "checkpoint_path": metadata["path"],
+        "checkpoint_sha256": metadata["sha256"],
+        "checkpoint_bytes": int(metadata["bytes"]),
+        "raw_weights_present": True,
+        "optimizer_state_present": True,
+        "ema_weights_present": True,
+        "requested": True,
+        "complete": False,
+        "hash_verified": False,
+        "competition_bundle_available": False,
+    }
+    _write_json_atomic(
+        run_dir / "publish_requests" / f"checkpoint_{metadata['iteration']:06d}.json",
+        record,
+    )
+    return record
+
+
+def _ingest_publish_status(
+    path: Path, offset: int, tracker: WandbTracker, metrics_path: Path
+) -> int:
+    """Mirror complete publisher JSONL records into the durable metrics and W&B."""
+    if not path.is_file():
+        return offset
+    with path.open("r", encoding="utf-8") as handle:
+        handle.seek(offset)
+        while line := handle.readline():
+            if not line.endswith("\n"):
+                break
+            offset = handle.tell()
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as error:
+                print(f"Warning: ignoring invalid publisher status: {error}")
+                continue
+            tracker.log_checkpoint_export(record)
+            _write_metrics(
+                metrics_path,
+                {
+                    "iteration": record["iteration"],
+                    "checkpoint/hf_export_requested": int(
+                        record.get("requested", False)
+                    ),
+                    "checkpoint/hf_export_complete": int(record.get("complete", False)),
+                    "checkpoint/hf_hash_verified": int(
+                        record.get("hash_verified", False)
+                    ),
+                    "checkpoint/competition_bundle_available": int(
+                        record.get("competition_bundle_available", False)
+                    ),
+                    "checkpoint/hf_upload_seconds": record.get("upload_seconds", 0.0),
+                    "checkpoint/hf_remote_path": record.get("remote_path", ""),
+                },
+            )
+    return offset
+
+
+def _tree_sha256(tree) -> str:
+    """Hash array leaves with dtype and shape so matched trunks are auditable."""
+    digest = hashlib.sha256()
+    for leaf in jax.tree.leaves(eqx.filter(tree, eqx.is_inexact_array)):
+        array = np.asarray(jax.device_get(leaf))
+        digest.update(str(array.dtype).encode())
+        digest.update(str(array.shape).encode())
+        digest.update(array.tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _copy_atomic(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    shutil.copy2(source, temporary)
+    os.replace(temporary, destination)
+
+
 def _save_checkpoint(
     path: Path,
     network,
@@ -185,8 +349,10 @@ def _save_checkpoint(
     stage_index: int,
     key,
 ):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
     eqx.tree_serialise_leaves(
-        path,
+        temporary,
         (
             network,
             optimizer_state,
@@ -196,6 +362,59 @@ def _save_checkpoint(
             key,
         ),
     )
+    if not temporary.is_file() or temporary.stat().st_size == 0:
+        raise RuntimeError(f"Checkpoint serialization produced no data: {temporary}")
+    os.replace(temporary, path)
+    return {
+        "path": str(path),
+        "bytes": path.stat().st_size,
+        "sha256": _sha256_file(path),
+    }
+
+
+def _save_periodic_checkpoint(
+    run_dir: Path,
+    parameters,
+    static,
+    optimizer_state,
+    ema_parameters,
+    iteration: int,
+    stage_index: int,
+    key,
+    *,
+    archive: bool,
+) -> dict:
+    """Persist a host checkpoint before optional work such as league evaluation."""
+    current_network = eqx.combine(_first_pmap_replica_to_host(parameters), static)
+    current_optimizer_state = _first_pmap_replica_to_host(optimizer_state)
+    ema_network = eqx.combine(_first_pmap_replica_to_host(ema_parameters), static)
+    destination = (
+        run_dir / f"checkpoint_{iteration:06d}.eqx"
+        if archive
+        else run_dir / "latest.eqx"
+    )
+    metadata = _save_checkpoint(
+        destination,
+        current_network,
+        current_optimizer_state,
+        ema_network,
+        iteration,
+        stage_index,
+        key,
+    )
+    if archive:
+        _copy_atomic(destination, run_dir / "latest.eqx")
+    metadata.update(
+        {
+            "iteration": iteration,
+            "stage": stage_index,
+            "archive": archive,
+        }
+    )
+    (run_dir / "latest_checkpoint.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return metadata
 
 
 def _load_checkpoint_state(path, skeleton, config: TrainingConfig):
@@ -254,81 +473,334 @@ def _make_opponent_evaluator(
     )
 
 
+def _shard_league_pool(pool, n_maps: int, device_count: int):
+    if n_maps % device_count:
+        raise ValueError(
+            f"league_eval_maps ({n_maps}) must be divisible by devices ({device_count})"
+        )
+    maps_per_device = n_maps // device_count
+    return jax.tree.map(
+        lambda value: value[:n_maps].reshape(
+            (device_count, maps_per_device, *value.shape[1:])
+        ),
+        pool,
+    )
+
+
+def _shard_replicated_league_pool(pool, n_maps: int, device_count: int):
+    """Take disjoint map slices from a pool already replicated by ``pmap``."""
+    if n_maps % device_count:
+        raise ValueError(
+            f"league maps ({n_maps}) must be divisible by devices ({device_count})"
+        )
+    maps_per_device = n_maps // device_count
+    offsets = jnp.arange(device_count, dtype=jnp.int32) * maps_per_device
+
+    def take_slice(pool_shard, offset):
+        return jax.tree.map(
+            lambda value: jax.lax.dynamic_slice_in_dim(
+                value, offset, maps_per_device, axis=0
+            ),
+            pool_shard,
+        )
+
+    return jax.pmap(take_slice)(pool, offsets)
+
+
+def _safe_rate(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator else 0.0
+
+
+def _behavior_rates(
+    totals: dict[str, float], source_prefix: str, output_prefix: str = "behavior/"
+) -> dict[str, float]:
+    """Turn additive behavior counters into stable, auditable rates."""
+
+    def get(name: str) -> float:
+        return totals.get(f"{source_prefix}{name}", 0.0)
+
+    actions = get("actions")
+    moves = get("moves")
+    builds = get("builds")
+    opportunities = get("build_opportunity_steps")
+    completed_games = get("completed_games")
+    games_with_opportunity = get("games_with_build_opportunity")
+    moves_after_move = get("moves_after_move")
+    counters = {
+        name[len(source_prefix) :]: value
+        for name, value in totals.items()
+        if name.startswith(source_prefix)
+    }
+    return {
+        **{f"{output_prefix}count/{name}": value for name, value in counters.items()},
+        f"{output_prefix}castle_build/action_share": _safe_rate(builds, actions),
+        f"{output_prefix}castle_build/legal_step_rate": _safe_rate(
+            builds, opportunities
+        ),
+        f"{output_prefix}castle_build/legal_game_rate": _safe_rate(
+            get("games_with_build"), games_with_opportunity
+        ),
+        f"{output_prefix}castle_build/builds_per_game": _safe_rate(
+            builds, completed_games
+        ),
+        f"{output_prefix}dither/move_rate": _safe_rate(get("dithers"), moves),
+        f"{output_prefix}dither/consecutive_move_rate": _safe_rate(
+            get("dithers"), moves_after_move
+        ),
+        f"{output_prefix}pass/rate": _safe_rate(get("passes"), actions),
+        f"{output_prefix}half_move/rate": _safe_rate(get("half_moves"), moves),
+        f"{output_prefix}movement/reinforcement_rate": _safe_rate(
+            get("reinforce_moves"), moves
+        ),
+        f"{output_prefix}movement/visible_neutral_expansion_rate": _safe_rate(
+            get("expansion_moves"), moves
+        ),
+        f"{output_prefix}movement/visible_opponent_attack_rate": _safe_rate(
+            get("attack_moves"), moves
+        ),
+        f"{output_prefix}game/mean_length": _safe_rate(
+            get("game_length_sum"), completed_games
+        ),
+        f"{output_prefix}game/mean_terminal_land_margin": _safe_rate(
+            get("terminal_land_margin_sum"), completed_games
+        ),
+        f"{output_prefix}game/mean_terminal_army_margin": _safe_rate(
+            get("terminal_army_margin_sum"), completed_games
+        ),
+    }
+
+
+def _combine_sharded_evaluation(metrics) -> dict[str, float]:
+    host = {name: np.asarray(value, dtype=np.float64) for name, value in metrics.items()}
+    wins = float(host["wins"].sum())
+    losses = float(host["losses"].sum())
+    draws = float(host["draws"].sum())
+    score = float(host["score"].mean())
+    second_moment = np.mean(host["paired_score_std"] ** 2 + host["score"] ** 2)
+    paired_score_std = float(np.sqrt(max(0.0, second_moment - score**2)))
+    result = {
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "games": wins + losses + draws,
+        "score": score,
+        "paired_score_std": paired_score_std,
+    }
+    additive = {
+        name: float(value.sum())
+        for name, value in host.items()
+        if name not in {"wins", "losses", "draws", "score", "paired_score_std"}
+    }
+    result.update(additive)
+    if any(name.startswith("behavior_") for name in additive):
+        result.update(_behavior_rates(additive, "behavior_"))
+    if any(name.startswith("behavior_a_") for name in additive):
+        result.update(_behavior_rates(additive, "behavior_a_", "behavior/current/"))
+    if any(name.startswith("behavior_b_") for name in additive):
+        result.update(_behavior_rates(additive, "behavior_b_", "behavior/frozen/"))
+    return result
+
+
+def _run_league(
+    config: TrainingConfig,
+    policies: dict[str, object],
+    tracker: WandbTracker,
+    run_dir: Path,
+    iteration: int,
+    *,
+    label: str,
+    checkpoint_opponent=None,
+) -> dict:
+    """Evaluate named policies on identical locked final-stage maps, sharded by GPU."""
+    stage = config.curriculum[-1]
+    largest_map_count = max(config.league_eval_maps, config.league_checkpoint_maps)
+    environment = make_environment(config, stage, pool_size=max(largest_map_count, 16))
+    pool_key = jax.random.PRNGKey(config.league_eval_seed)
+    pool_replicated = _reset_replicated_pool(environment, pool_key)
+    device_count = jax.device_count()
+    sharded_pool = _shard_replicated_league_pool(
+        pool_replicated, config.league_eval_maps, device_count
+    )
+    maps_per_device = config.league_eval_maps // device_count
+    payload_policies: dict[str, dict] = {}
+    league_started = time.perf_counter()
+
+    for policy_index, (policy_name, network) in enumerate(policies.items()):
+        host_network = jax.device_get(network)
+        results: dict[str, dict[str, float]] = {}
+        for opponent_index, opponent_name in enumerate(config.league_opponents):
+            opponent_action = make_opponent_policy(opponent_name)
+
+            def evaluate_shard(pool_shard, network_shard, evaluation_key):
+                return evaluate_paired_vs_opponent(
+                    environment,
+                    pool_shard,
+                    network_shard,
+                    evaluation_key,
+                    maps_per_device,
+                    config.truncation,
+                    opponent_action,
+                    pad_to=config.pad_to,
+                    history_size=config.history_size,
+                    temporal_window=config.temporal_window,
+                    observation_schema=config.observation_schema,
+                )
+
+            evaluator = jax.pmap(evaluate_shard, in_axes=(0, None, 0))
+            evaluation_key = jax.random.fold_in(
+                pool_key, policy_index * len(config.league_opponents) + opponent_index + 1
+            )
+            device_keys = jax.random.split(evaluation_key, device_count)
+            opponent_started = time.perf_counter()
+            evaluation, _ = evaluator(sharded_pool, host_network, device_keys)
+            evaluation = jax.device_get(evaluation)
+            result = _combine_sharded_evaluation(evaluation)
+            result["evaluation_seconds"] = time.perf_counter() - opponent_started
+            results[opponent_name] = result
+            record = {
+                "iteration": iteration,
+                **{
+                    f"league/{policy_name}/{opponent_name}/{name}": value
+                    for name, value in result.items()
+                },
+            }
+            _write_metrics(run_dir / "metrics.jsonl", record)
+            tracker.log_evaluation(record)
+            print(
+                f"  league {policy_name}/{opponent_name}: {int(result['wins'])}W/"
+                f"{int(result['losses'])}L/{int(result['draws'])}D, "
+                f"score={result['score']:.3f}"
+            )
+
+        aggregate = aggregate_league_results(results)
+        behavior_totals: dict[str, float] = {}
+        for result in results.values():
+            for name, value in result.items():
+                if name.startswith("behavior_"):
+                    behavior_totals[name] = behavior_totals.get(name, 0.0) + value
+        aggregate.update(behavior_totals)
+        aggregate.update(_behavior_rates(behavior_totals, "behavior_"))
+        aggregate["evaluation_seconds"] = sum(
+            result["evaluation_seconds"] for result in results.values()
+        )
+        aggregate_record = {
+            "iteration": iteration,
+            **{
+                f"league/{policy_name}/aggregate/{name}": value
+                for name, value in aggregate.items()
+            },
+        }
+        _write_metrics(run_dir / "metrics.jsonl", aggregate_record)
+        tracker.log_evaluation(aggregate_record)
+        checkpoint_result = None
+        seven_opponent_macro_score = None
+        if checkpoint_opponent is not None:
+            checkpoint_maps = config.league_checkpoint_maps
+            if checkpoint_maps % device_count:
+                raise ValueError(
+                    "league_checkpoint_maps must be divisible by the device count"
+                )
+            checkpoint_pool = _shard_replicated_league_pool(
+                pool_replicated, checkpoint_maps, device_count
+            )
+            checkpoint_maps_per_device = checkpoint_maps // device_count
+
+            def evaluate_checkpoint_shard(pool_shard, current, frozen):
+                return evaluate_paired_networks(
+                    environment,
+                    pool_shard,
+                    current,
+                    frozen,
+                    checkpoint_maps_per_device,
+                    config.truncation,
+                    schema_a=config.observation_schema,
+                    schema_b=config.observation_schema,
+                    pad_to=config.pad_to,
+                    history_size=config.history_size,
+                    temporal_window=config.temporal_window,
+                )
+
+            checkpoint_evaluator = jax.pmap(
+                evaluate_checkpoint_shard, in_axes=(0, None, None)
+            )
+            checkpoint_started = time.perf_counter()
+            checkpoint_metrics = checkpoint_evaluator(
+                checkpoint_pool, host_network, jax.device_get(checkpoint_opponent)
+            )
+            checkpoint_result = _combine_sharded_evaluation(
+                jax.device_get(checkpoint_metrics)
+            )
+            checkpoint_result["evaluation_seconds"] = (
+                time.perf_counter() - checkpoint_started
+            )
+            checkpoint_name = config.league_checkpoint_name or "fixed_checkpoint"
+            checkpoint_record = {
+                "iteration": iteration,
+                **{
+                    f"league/{policy_name}/{checkpoint_name}/{name}": value
+                    for name, value in checkpoint_result.items()
+                },
+            }
+            seven_scores = [result["score"] for result in results.values()]
+            seven_scores.append(checkpoint_result["score"])
+            seven_opponent_macro_score = float(np.mean(seven_scores))
+            checkpoint_record[
+                f"league/{policy_name}/seven_opponent_macro_score"
+            ] = seven_opponent_macro_score
+            _write_metrics(run_dir / "metrics.jsonl", checkpoint_record)
+            tracker.log_evaluation(checkpoint_record)
+            print(
+                f"  league {policy_name}/{checkpoint_name}: "
+                f"{int(checkpoint_result['wins'])}W/"
+                f"{int(checkpoint_result['losses'])}L/"
+                f"{int(checkpoint_result['draws'])}D, "
+                f"score={checkpoint_result['score']:.3f}"
+            )
+        payload_policies[policy_name] = {
+            "opponents": results,
+            "aggregate": aggregate,
+            "fixed_checkpoint": checkpoint_result,
+            "seven_opponent_macro_score": seven_opponent_macro_score,
+        }
+        print(
+            f"  league {policy_name}/aggregate: {int(aggregate['wins'])}W/"
+            f"{int(aggregate['losses'])}L/{int(aggregate['draws'])}D, "
+            f"score={aggregate['score']:.3f}, macro={aggregate['macro_score']:.3f}"
+        )
+
+    payload = {
+        "iteration": iteration,
+        "label": label,
+        "seed": config.league_eval_seed,
+        "maps_per_opponent": config.league_eval_maps,
+        "games_per_opponent": 2 * config.league_eval_maps,
+        "policies": payload_policies,
+        "evaluation_seconds": time.perf_counter() - league_started,
+    }
+    result_path = run_dir / f"league_{label}.json"
+    result_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return payload
+
+
 def _run_post_training_league(
     config: TrainingConfig,
     network,
     tracker: WandbTracker,
     run_dir: Path,
+    *,
+    iteration: int | None = None,
 ) -> dict:
-    """Evaluate one EMA checkpoint on locked final-stage maps."""
-    stage = config.curriculum[-1]
-    environment = make_environment(
-        config, stage, pool_size=max(config.league_eval_maps, 16)
+    """Backward-compatible EMA-only terminal league entrypoint."""
+    return _run_league(
+        config,
+        {"ema": network},
+        tracker,
+        run_dir,
+        config.num_iterations if iteration is None else iteration,
+        label="final",
     )
-    pool_key = jax.random.PRNGKey(config.league_eval_seed)
-    pool, _ = environment.reset(pool_key)
-    results: dict[str, dict[str, float]] = {}
-
-    for opponent_index, opponent_name in enumerate(config.league_opponents):
-        evaluator = _make_opponent_evaluator(
-            config,
-            environment,
-            config.league_eval_maps,
-            config.truncation,
-            opponent_name,
-        )
-        evaluation_key = jax.random.fold_in(pool_key, opponent_index + 1)
-        evaluation, _ = evaluator(pool, network, evaluation_key)
-        result = {name: float(value) for name, value in evaluation.items()}
-        result["games"] = result["wins"] + result["losses"] + result["draws"]
-        results[opponent_name] = result
-        record = {
-            "iteration": config.num_iterations,
-            **{
-                f"league/{opponent_name}/{name}": value
-                for name, value in result.items()
-            },
-        }
-        _write_metrics(run_dir / "metrics.jsonl", record)
-        tracker.log_evaluation(record)
-        print(
-            f"  league {opponent_name}: {int(result['wins'])}W/"
-            f"{int(result['losses'])}L/{int(result['draws'])}D, "
-            f"score={result['score']:.3f}"
-        )
-
-    aggregate = aggregate_league_results(results)
-    aggregate_record = {
-        "iteration": config.num_iterations,
-        **{f"league/aggregate/{name}": value for name, value in aggregate.items()},
-    }
-    _write_metrics(run_dir / "metrics.jsonl", aggregate_record)
-    tracker.log_evaluation(aggregate_record)
-    payload = {
-        "iteration": config.num_iterations,
-        "seed": config.league_eval_seed,
-        "maps_per_opponent": config.league_eval_maps,
-        "games_per_opponent": 2 * config.league_eval_maps,
-        "opponents": results,
-        "aggregate": aggregate,
-    }
-    (run_dir / "league_results.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-    )
-    with (run_dir / "league_results.jsonl").open("w", encoding="utf-8") as handle:
-        for opponent_name, result in results.items():
-            handle.write(
-                json.dumps({"opponent": opponent_name, **result}, sort_keys=True) + "\n"
-            )
-        handle.write(
-            json.dumps({"opponent": "aggregate", **aggregate}, sort_keys=True) + "\n"
-        )
-    print(
-        f"  league aggregate: {int(aggregate['wins'])}W/"
-        f"{int(aggregate['losses'])}L/{int(aggregate['draws'])}D, "
-        f"score={aggregate['score']:.3f}, macro={aggregate['macro_score']:.3f}"
-    )
-    return payload
 
 
 def make_prepare_batch(config: TrainingConfig):
@@ -450,6 +922,10 @@ def train(
     trace_dir: str | None = None,
     trace_start_iteration: int = 1,
     trace_iterations: int = 0,
+    stop_at_unix: float | None = None,
+    duration_seconds: float | None = None,
+    initialization_gate: str | None = None,
+    graceful_signals: bool = False,
 ):
     """Train the shared AverageJoe-style baseline and return its final state."""
     config.validate()
@@ -459,6 +935,22 @@ def train(
         raise ValueError("trace_start_iteration must be positive")
     if trace_iterations and not trace_dir:
         raise ValueError("trace_dir is required when trace_iterations is non-zero")
+    if stop_at_unix is not None and duration_seconds is not None:
+        raise ValueError("stop_at_unix and duration_seconds are mutually exclusive")
+    if duration_seconds is not None and duration_seconds <= 0:
+        raise ValueError("duration_seconds must be positive")
+    stop_requested = False
+    previous_signal_handlers: dict[int, object] = {}
+
+    def request_stop(signum, _frame):
+        nonlocal stop_requested
+        stop_requested = True
+        print(f"Graceful stop requested by signal {signum}; finishing current operation")
+
+    if graceful_signals:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous_signal_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, request_stop)
     run_dir = config.run_dir
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "config.json").write_text(
@@ -484,7 +976,15 @@ def train(
     ema_network = network
     start_iteration = 0
     stage_index = 0
+    fixed_league_network = None
     if resume:
+        if config.resume_checkpoint_sha256:
+            actual_sha256 = _sha256_file(Path(resume))
+            if actual_sha256 != config.resume_checkpoint_sha256:
+                raise ValueError(
+                    f"Resume checkpoint SHA-256 mismatch: expected "
+                    f"{config.resume_checkpoint_sha256}, got {actual_sha256}"
+                )
         skeleton = (
             network,
             optimizer_state,
@@ -507,6 +1007,20 @@ def train(
             raise ValueError(
                 f"Checkpoint curriculum stage {stage_index} is not present in the config"
             )
+        if config.parent_final_iteration and start_iteration != config.parent_final_iteration:
+            raise ValueError(
+                f"Expected parent iteration {config.parent_final_iteration}, "
+                f"checkpoint contains {start_iteration}"
+            )
+        if config.resume_start_stage >= 0 and stage_index != config.resume_start_stage:
+            raise ValueError(
+                f"Expected resume stage {config.resume_start_stage}, "
+                f"checkpoint contains {stage_index}"
+            )
+        if config.league_checkpoint_path and Path(config.league_checkpoint_path).resolve() == Path(resume).resolve():
+            fixed_league_network = (
+                ema_network if config.league_checkpoint_policy == "ema" else network
+            )
         print(
             f"Resumed {resume} at iteration {start_iteration}, curriculum stage {stage_index}"
         )
@@ -524,9 +1038,27 @@ def train(
     stage = config.curriculum[stage_index]
     environment = make_environment(config, stage)
     key, pool_key = jax.random.split(key)
-    pool, _ = environment.reset(pool_key)
+    pool_replicated = _reset_replicated_pool(environment, pool_key)
+    trunk = network.transformer if isinstance(network, ConvCompetitionTransformer) else network
+    initialization = {
+        "parameter_count": parameter_count,
+        "transformer_trunk_sha256": _tree_sha256(trunk),
+        "architecture": config.model_architecture,
+        "seed": config.seed,
+        "start_iteration": start_iteration,
+        "resume_raw_weights": bool(resume and config.resume_raw_weights),
+        "resume_optimizer_state": bool(resume and config.resume_optimizer_state),
+        "resume_ema_weights": bool(resume and config.resume_ema_weights),
+        "parent_wall_seconds": config.parent_wall_seconds,
+    }
     if not resume and isinstance(network, ConvCompetitionTransformer):
-        calibration_observations = _conv_calibration_observations(config, pool)
+        calibration_state_count = (config.conv_calibration_samples + 1) // 2
+        calibration_pool = _first_pmap_replica_slice(
+            pool_replicated, calibration_state_count
+        )
+        calibration_observations = _conv_calibration_observations(
+            config, calibration_pool
+        )
         network, calibration = calibrate_conv_token_rms(
             network,
             calibration_observations,
@@ -535,6 +1067,7 @@ def train(
         jax.block_until_ready(calibration)
         calibration = {name: float(value) for name, value in calibration.items()}
         calibration["samples"] = int(calibration_observations.shape[0])
+        initialization["conv_calibration"] = calibration
         (run_dir / "conv_calibration.json").write_text(
             json.dumps(calibration, indent=2, sort_keys=True), encoding="utf-8"
         )
@@ -547,15 +1080,67 @@ def train(
         )
         ema_network = network
         optimizer_state = optimizer.init(eqx.filter(network, eqx.is_inexact_array))
-    pool_replicated = _replicate_for_pmap(pool)
-
-    eval_pool_size = max(config.eval_games // 2, 16)
-    evaluation_environment = make_environment(config, stage, pool_size=eval_pool_size)
-    key, evaluation_pool_key = jax.random.split(key)
-    evaluation_pool, _ = evaluation_environment.reset(evaluation_pool_key)
-    evaluator = _make_evaluator(
-        config, evaluation_environment, config.eval_games // 2, config.truncation
+    if config.league_checkpoint_path and fixed_league_network is None:
+        fixed_path = Path(config.league_checkpoint_path)
+        actual_sha256 = _sha256_file(fixed_path)
+        if actual_sha256 != config.league_checkpoint_sha256:
+            raise ValueError(
+                f"Fixed league checkpoint SHA-256 mismatch: expected "
+                f"{config.league_checkpoint_sha256}, got {actual_sha256}"
+            )
+        fixed_skeleton = (
+            network,
+            optimizer_state,
+            ema_network,
+            jnp.int32(0),
+            jnp.int32(0),
+            key,
+        )
+        fixed_raw, _, fixed_ema, _, _, _ = _load_checkpoint_state(
+            fixed_path, fixed_skeleton, config
+        )
+        fixed_league_network = (
+            fixed_ema if config.league_checkpoint_policy == "ema" else fixed_raw
+        )
+    (run_dir / "initialization.json").write_text(
+        json.dumps(initialization, indent=2, sort_keys=True), encoding="utf-8"
     )
+    initialization_metrics = {
+        "iteration": start_iteration,
+        "initialization/parameter_count": parameter_count,
+    }
+    if "conv_calibration" in initialization:
+        initialization_metrics.update(
+            {
+                f"initialization/{name}": value
+                for name, value in initialization["conv_calibration"].items()
+            }
+        )
+    tracker.log_initialization(initialization_metrics)
+
+    if initialization_gate and not resume:
+        gate_path = Path(initialization_gate)
+        print(f"Waiting for initialization approval at {gate_path}")
+        while not gate_path.exists():
+            if stop_at_unix is not None and time.time() >= stop_at_unix:
+                raise TimeoutError("Training deadline reached while waiting for initialization gate")
+            if stop_requested:
+                raise RuntimeError("Stopped before initialization was approved")
+            time.sleep(1)
+        print("Initialization approved")
+    evaluation_environment = None
+    evaluation_pool = None
+    evaluator = None
+    if config.eval_every > 0:
+        eval_pool_size = max(config.eval_games // 2, 16)
+        evaluation_environment = make_environment(
+            config, stage, pool_size=eval_pool_size
+        )
+        key, evaluation_pool_key = jax.random.split(key)
+        evaluation_pool, _ = evaluation_environment.reset(evaluation_pool_key)
+        evaluator = _make_evaluator(
+            config, evaluation_environment, config.eval_games // 2, config.truncation
+        )
 
     parameters, static = eqx.partition(network, eqx.is_inexact_array)
     parameters = _replicate_for_pmap(parameters)
@@ -607,9 +1192,21 @@ def train(
 
     device_count = jax.device_count()
     train_started = time.perf_counter()
+    if duration_seconds is not None:
+        stop_at_unix = time.time() + duration_seconds
+    completed_iterations = start_iteration
+    latest_every = config.latest_checkpoint_every or config.checkpoint_every
+    periodic_raw_enabled = "raw" in config.league_eval_policies
+    last_league_finished_at = train_started
+    cumulative_league_seconds = 0.0
+    publish_status_path = run_dir / "publish_status.jsonl"
+    publish_status_offset = 0
     trace_active = False
     trace_stop_iteration = trace_start_iteration + trace_iterations - 1
     for iteration in range(start_iteration, config.num_iterations):
+        if stop_requested or (stop_at_unix is not None and time.time() >= stop_at_unix):
+            print("Training soft deadline reached before starting another iteration")
+            break
         iteration_number = iteration + 1
         if trace_iterations and iteration_number == trace_start_iteration:
             Path(trace_dir).mkdir(parents=True, exist_ok=True)
@@ -710,20 +1307,32 @@ def train(
         iteration_seconds = time.perf_counter() - iteration_started
         total_samples = device_count * 2 * config.num_envs * config.num_steps
         samples_per_second = total_samples / iteration_seconds
+        completed_iterations = iteration + 1
+        cumulative_samples = completed_iterations * total_samples
+        elapsed_training = time.perf_counter() - train_started
         current_learning_rate = _learning_rate_float(
             config,
             iteration * (config.ppo_epochs * kept_samples // config.minibatch_size),
         )
         record = {
             "iteration": iteration + 1,
-            "wall_seconds": time.perf_counter() - train_started,
+            "wall_seconds": elapsed_training,
+            "active_training_seconds": elapsed_training,
             "iteration_seconds": iteration_seconds,
             "stage": stage_index,
+            "cumulative_samples": cumulative_samples,
+            "continuation_iteration": completed_iterations - start_iteration,
+            "continuation_samples": (completed_iterations - start_iteration)
+            * total_samples,
             "samples_per_second": samples_per_second,
+            "samples_per_gpu_second": samples_per_second / device_count,
+            "allocated_gpu_hours": elapsed_training * device_count / 3600.0,
+            "training_gpu_hours": elapsed_training * device_count / 3600.0,
             "episodes": episodes,
             "wins": wins,
             "losses": losses,
             "draws": draws,
+            "score": (wins + 0.5 * draws) / max(episodes, 1),
             "explained_variance": explained_variance,
             "learning_rate": current_learning_rate,
             "entropy_coefficient": entropy_coefficient,
@@ -752,20 +1361,13 @@ def train(
         )
         if should_evaluate:
             evaluation_started = time.perf_counter()
+            stage_before = stage_index
             key, evaluation_key = jax.random.split(key)
             ema_network = eqx.combine(
-                jax.tree.map(lambda value: value[0], ema_parameters), static
+                _first_pmap_replica_to_host(ema_parameters), static
             )
             evaluation, _ = evaluator(evaluation_pool, ema_network, evaluation_key)
             evaluation = jax.tree.map(float, evaluation)
-            evaluation_record = {
-                "iteration": iteration + 1,
-                "performance/evaluation_seconds": time.perf_counter()
-                - evaluation_started,
-                **{f"evaluation/{name}": value for name, value in evaluation.items()},
-            }
-            _write_metrics(metrics_path, evaluation_record)
-            tracker.log_evaluation(evaluation_record)
             print(
                 f"  eval EMA: {int(evaluation['wins'])}W/"
                 f"{int(evaluation['losses'])}L/{int(evaluation['draws'])}D, "
@@ -783,8 +1385,7 @@ def train(
                     )
                     environment = make_environment(config, stage)
                     key, pool_key = jax.random.split(key)
-                    pool, _ = environment.reset(pool_key)
-                    pool_replicated = _replicate_for_pmap(pool)
+                    pool_replicated = _reset_replicated_pool(environment, pool_key)
                     rollout_pmapped = jax.pmap(rollout_shard)
                     key, states_key = jax.random.split(key)
                     device_keys = jax.random.split(states_key, jax.device_count())
@@ -806,59 +1407,141 @@ def train(
                         config.truncation,
                     )
 
+            evaluation_record = {
+                "iteration": iteration + 1,
+                "curriculum_eval/evaluation_seconds": time.perf_counter()
+                - evaluation_started,
+                "curriculum_eval/stage_before": stage_before,
+                "curriculum_eval/stage_after": stage_index,
+                "curriculum_eval/advanced": int(stage_index != stage_before),
+                "curriculum_eval/ema/games": evaluation["wins"]
+                + evaluation["losses"]
+                + evaluation["draws"],
+                **{
+                    f"curriculum_eval/ema/{name}": value
+                    for name, value in evaluation.items()
+                },
+            }
+            _write_metrics(metrics_path, evaluation_record)
+            tracker.log_evaluation(evaluation_record)
+
+        should_archive = (iteration + 1) % config.checkpoint_every == 0
+        should_save_latest = (iteration + 1) % latest_every == 0
+        if should_archive or should_save_latest:
+            checkpoint_started = time.perf_counter()
+            checkpoint_metadata = _save_periodic_checkpoint(
+                run_dir,
+                parameters,
+                static,
+                optimizer_state,
+                ema_parameters,
+                iteration + 1,
+                stage_index,
+                key,
+                archive=should_archive,
+            )
+            print(
+                f"  saved {checkpoint_metadata['path']} "
+                f"({checkpoint_metadata['sha256']})"
+            )
+            timing_record = {
+                "iteration": iteration + 1,
+                "checkpoint/latest_saved": 1,
+                "checkpoint/archive_saved": int(should_archive),
+                "checkpoint/bytes": checkpoint_metadata["bytes"],
+                "checkpoint/sha256": checkpoint_metadata["sha256"],
+                "checkpoint/raw_weights_present": 1,
+                "checkpoint/optimizer_state_present": 1,
+                "checkpoint/ema_weights_present": 1,
+                "checkpoint/save_seconds": time.perf_counter()
+                - checkpoint_started,
+            }
+            if should_archive:
+                publication = _request_checkpoint_publication(
+                    run_dir, checkpoint_metadata
+                )
+                timing_record["checkpoint/hf_export_requested"] = 1
+                tracker.log_checkpoint_export(publication)
+            _write_metrics(metrics_path, timing_record)
+            tracker.log_evaluation(timing_record)
+
+        should_run_league = config.league_eval_every > 0 and (
+            (iteration + 1) % config.league_eval_every == 0
+        )
+        if should_run_league:
+            league_started = time.perf_counter()
+            current_network = eqx.combine(
+                _first_pmap_replica_to_host(parameters), static
+            )
+            ema_network = eqx.combine(
+                _first_pmap_replica_to_host(ema_parameters), static
+            )
+            policy_names = [
+                name
+                for name in config.league_eval_policies
+                if name != "raw" or periodic_raw_enabled
+            ]
+            policy_networks = {
+                name: current_network if name == "raw" else ema_network
+                for name in policy_names
+            }
+            _run_league(
+                config,
+                policy_networks,
+                tracker,
+                run_dir,
+                iteration + 1,
+                label=f"{iteration + 1:06d}",
+                checkpoint_opponent=fixed_league_network,
+            )
+            league_finished = time.perf_counter()
+            league_seconds = league_finished - league_started
+            cumulative_league_seconds += league_seconds
+            interval_seconds = max(league_started - last_league_finished_at, 1e-9)
+            interval_overhead_fraction = league_seconds / (
+                interval_seconds + league_seconds
+            )
+            run_time_fraction = cumulative_league_seconds / max(
+                league_finished - train_started, 1e-9
+            )
+            overhead_record = {
+                "iteration": iteration + 1,
+                "league/periodic/evaluation_seconds": league_seconds,
+                "league/periodic/cumulative_evaluation_seconds": cumulative_league_seconds,
+                "league/periodic/interval_overhead_fraction": interval_overhead_fraction,
+                "league/periodic/run_time_fraction": run_time_fraction,
+                "league/periodic/raw_enabled": int(periodic_raw_enabled),
+            }
+            _write_metrics(metrics_path, overhead_record)
+            tracker.log_evaluation(overhead_record)
+            if (
+                periodic_raw_enabled
+                and interval_overhead_fraction
+                > config.league_periodic_raw_max_overhead_fraction
+            ):
+                periodic_raw_enabled = False
+                print(
+                    "  periodic league overhead exceeded threshold; "
+                    "future periodic evaluations will use EMA only"
+                )
+            last_league_finished_at = league_finished
+
+        publish_status_offset = _ingest_publish_status(
+            publish_status_path, publish_status_offset, tracker, metrics_path
+        )
+
         if (
             config.reset_pool_every > 0
             and (iteration + 1) % config.reset_pool_every == 0
         ):
             pool_reset_started = time.perf_counter()
             key, pool_key = jax.random.split(key)
-            pool, _ = environment.reset(pool_key)
-            pool_replicated = _replicate_for_pmap(pool)
+            pool_replicated = _reset_replicated_pool(environment, pool_key)
             if config.debug_timing:
                 timing_record = {
                     "iteration": iteration + 1,
                     "performance/pool_reset_seconds": time.perf_counter()
                     - pool_reset_started,
-                }
-                _write_metrics(metrics_path, timing_record)
-                tracker.log_evaluation(timing_record)
-
-        if (iteration + 1) % config.checkpoint_every == 0:
-            checkpoint_started = time.perf_counter()
-            current_network = eqx.combine(
-                jax.tree.map(lambda value: value[0], parameters), static
-            )
-            current_optimizer_state = jax.tree.map(
-                lambda value: value[0], optimizer_state
-            )
-            ema_network = eqx.combine(
-                jax.tree.map(lambda value: value[0], ema_parameters), static
-            )
-            checkpoint = run_dir / f"checkpoint_{iteration + 1:06d}.eqx"
-            _save_checkpoint(
-                checkpoint,
-                current_network,
-                current_optimizer_state,
-                ema_network,
-                iteration + 1,
-                stage_index,
-                key,
-            )
-            _save_checkpoint(
-                run_dir / "latest.eqx",
-                current_network,
-                current_optimizer_state,
-                ema_network,
-                iteration + 1,
-                stage_index,
-                key,
-            )
-            print(f"  saved {checkpoint}")
-            if config.debug_timing:
-                timing_record = {
-                    "iteration": iteration + 1,
-                    "performance/checkpoint_seconds": time.perf_counter()
-                    - checkpoint_started,
                 }
                 _write_metrics(metrics_path, timing_record)
                 tracker.log_evaluation(timing_record)
@@ -873,29 +1556,81 @@ def train(
             trace_active = False
             print(f"JAX trace stopped after iteration {iteration_number}")
 
+        if stop_requested or (stop_at_unix is not None and time.time() >= stop_at_unix):
+            print(f"Stopping cleanly after iteration {completed_iterations}")
+            break
+
     if trace_active:
         jax.block_until_ready(parameters)
         jax.profiler.stop_trace()
 
-    final_network = eqx.combine(
-        jax.tree.map(lambda value: value[0], parameters), static
-    )
-    final_optimizer_state = jax.tree.map(lambda value: value[0], optimizer_state)
+    final_network = eqx.combine(_first_pmap_replica_to_host(parameters), static)
+    final_optimizer_state = _first_pmap_replica_to_host(optimizer_state)
     final_ema_network = eqx.combine(
-        jax.tree.map(lambda value: value[0], ema_parameters), static
+        _first_pmap_replica_to_host(ema_parameters), static
     )
-    _save_checkpoint(
-        run_dir / "final.eqx",
+    terminal_checkpoint_started = time.perf_counter()
+    final_metadata = _save_checkpoint(
+        run_dir / "terminal.eqx",
         final_network,
         final_optimizer_state,
         final_ema_network,
-        config.num_iterations,
+        completed_iterations,
         stage_index,
         key,
     )
+    _copy_atomic(run_dir / "terminal.eqx", run_dir / "final.eqx")
+    _copy_atomic(run_dir / "terminal.eqx", run_dir / "latest.eqx")
+    final_metadata.update({"iteration": completed_iterations, "stage": stage_index})
+    (run_dir / "terminal_checkpoint.json").write_text(
+        json.dumps(final_metadata, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    tracker.log_evaluation(
+        {
+            "iteration": completed_iterations,
+            "checkpoint/terminal_saved": 1,
+            "checkpoint/bytes": final_metadata["bytes"],
+            "checkpoint/sha256": final_metadata["sha256"],
+            "checkpoint/raw_weights_present": 1,
+            "checkpoint/optimizer_state_present": 1,
+            "checkpoint/ema_weights_present": 1,
+            "checkpoint/save_seconds": time.perf_counter()
+            - terminal_checkpoint_started,
+            "checkpoint/hf_export_requested": 1,
+        }
+    )
+    terminal_publication = _request_checkpoint_publication(run_dir, final_metadata)
+    tracker.log_checkpoint_export(terminal_publication)
     if config.league_eval_after_training:
-        _run_post_training_league(config, final_ema_network, tracker, run_dir)
+        terminal_policies = {
+            name: final_network if name == "raw" else final_ema_network
+            for name in config.league_eval_policies
+        }
+        _run_league(
+            config,
+            terminal_policies,
+            tracker,
+            run_dir,
+            completed_iterations,
+            label="final",
+            checkpoint_opponent=fixed_league_network,
+        )
+    publish_status_offset = _ingest_publish_status(
+        publish_status_path, publish_status_offset, tracker, metrics_path
+    )
+    elapsed = time.perf_counter() - train_started
+    tracker.update_summary(
+        {
+            "final_iteration": completed_iterations,
+            "final_curriculum_stage": stage_index,
+            "final_checkpoint_sha256": final_metadata["sha256"],
+            "wall_seconds": elapsed,
+            "allocated_gpu_hours": elapsed * device_count / 3600.0,
+        }
+    )
     tracker.finish()
+    for signum, handler in previous_signal_handlers.items():
+        signal.signal(signum, handler)
     return final_network, final_optimizer_state, final_ema_network
 
 
@@ -924,6 +1659,20 @@ def parse_args():
         default=0,
         help="Number of iterations to capture; zero disables tracing",
     )
+    parser.add_argument(
+        "--stop-at-unix",
+        type=float,
+        help="Soft wall-clock deadline; finish the current iteration and checkpoint",
+    )
+    parser.add_argument(
+        "--duration-hours",
+        type=float,
+        help="Training-loop duration in hours, starting immediately before iteration work",
+    )
+    parser.add_argument(
+        "--initialization-gate",
+        help="For fresh runs, wait for this supervisor approval file before iteration 1",
+    )
     return parser.parse_args()
 
 
@@ -944,6 +1693,12 @@ def main():
         trace_dir=args.trace_dir,
         trace_start_iteration=args.trace_start_iteration,
         trace_iterations=args.trace_iterations,
+        stop_at_unix=args.stop_at_unix,
+        duration_seconds=(
+            args.duration_hours * 3600.0 if args.duration_hours is not None else None
+        ),
+        initialization_gate=args.initialization_gate,
+        graceful_signals=True,
     )
 
 

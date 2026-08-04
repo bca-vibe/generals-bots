@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Build a lightweight side-by-side index for two self-contained dashboards."""
+import argparse
+import html
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("out_path")
+parser.add_argument("left_dashboard")
+parser.add_argument("right_dashboard")
+parser.add_argument("--title", default="Architecture A/B training dashboards")
+parser.add_argument("--left-label", default="Transformer")
+parser.add_argument("--right-label", default="Convolutional")
+args = parser.parse_args()
+
+
+def esc(value: str) -> str:
+    return html.escape(value, quote=True)
+
+page = f"""<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{esc(args.title)}</title>
+<style>
+  :root {{ color-scheme: light dark; --page:#f4f4f1; --ink:#111; --line:#d5d4ce; }}
+  @media (prefers-color-scheme: dark) {{ :root {{ --page:#0d0d0d; --ink:#fff; --line:#343431; }} }}
+  * {{ box-sizing:border-box }}
+  body {{ margin:0; background:var(--page); color:var(--ink); font:14px system-ui,sans-serif }}
+  header {{ padding:12px 16px 10px; border-bottom:1px solid var(--line) }}
+  h1 {{ margin:0; font-size:17px }}
+  .labels,.frames {{ display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line) }}
+  .labels div {{ padding:7px 14px; background:var(--page); font-weight:650 }}
+  iframe {{ width:100%; height:calc(100vh - 78px); border:0; background:white }}
+  @media (max-width:900px) {{
+    .labels {{ display:none }}
+    .frames {{ grid-template-columns:1fr }}
+    iframe {{ height:90vh }}
+  }}
+</style>
+<header><h1>{esc(args.title)}</h1></header>
+<div class="labels"><div>{esc(args.left_label)}</div><div>{esc(args.right_label)}</div></div>
+<main class="frames">
+  <iframe title="{esc(args.left_label)} dashboard" src="{esc(args.left_dashboard)}"></iframe>
+  <iframe title="{esc(args.right_label)} dashboard" src="{esc(args.right_dashboard)}"></iframe>
+</main>
+"""
+Path(args.out_path).write_text(page)
+print(f"wrote {args.out_path}")

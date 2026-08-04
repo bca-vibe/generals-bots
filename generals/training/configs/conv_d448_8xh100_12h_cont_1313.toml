@@ -1,0 +1,123 @@
+[training]
+run_name = "conv_d448_8xh100_12h_cont_from_001313_20260803"
+seed = 44
+output_dir = "runs"
+wandb_project = "generals-bots"
+wandb_entity = "bcarnold-independent"
+wandb_group = "arch_ab_d448_8xh100_5h_retry1_20260803"
+wandb_run_id = "conv-d448-12h-cont-from-001313-20260803"
+wandb_run_name = "Conv d448 · 8×H100 · 12h continuation from 1313"
+wandb_job_type = "training-continuation"
+wandb_tags = ["conv-transformer", "d448", "8xh100", "12h", "continuation", "resume-1313", "competition"]
+
+parent_wandb_run_id = "arch-ab-d448-5h-retry1-conv-20260803"
+parent_wandb_url = "https://wandb.ai/bcarnold-independent/generals-bots/runs/arch-ab-d448-5h-retry1-conv-20260803"
+parent_final_iteration = 1313
+parent_final_samples = 2753560576
+parent_wall_seconds = 15739.580556882
+resume_checkpoint_source = "bca-vibe/generals-bot@main:runs/arch_ab_d448_8xh100_5h_retry1_20260803/branches/conv/terminal.eqx"
+resume_checkpoint_sha256 = "23cf2c76ea348ee67b3c0dd796920a03cc2a1268e641d323dd926a5803306bd2"
+resume_raw_weights = true
+resume_optimizer_state = true
+resume_ema_weights = true
+resume_start_stage = 4
+previous_device_count = 4
+previous_gpu_layout = "4xH100; envs_per_gpu=512; minibatch_per_gpu=1024"
+current_gpu_layout = "8xH100; envs_per_gpu=256; minibatch_per_gpu=512"
+previous_num_envs_per_device = 512
+previous_minibatch_size_per_device = 1024
+preserved_global_envs = 2048
+preserved_global_minibatch_size = 4096
+
+pad_to = 21
+min_grid_size = 18
+max_grid_size = 21
+truncation = 1200
+deathtouch_turn = 800
+mountain_density_min = 0.24
+mountain_density_max = 0.26
+pool_size = 200000
+reset_pool_every = 20
+
+history_size = 7
+temporal_window = 512
+observation_schema = "competition_39"
+model_architecture = "conv_transformer"
+depth = 7
+embed_dim = 448
+attention_heads = 8
+ff_factor = 3
+patch_size = 3
+use_bf16 = true
+value_bins = 128
+value_min = -1.0
+value_max = 1.0
+hl_gauss_sigma = 0.04
+conv_channels = 96
+conv_groups = 12
+conv_initial_token_rms_ratio = 0.25
+conv_calibration_samples = 512
+
+num_envs = 256
+num_steps = 512
+num_iterations = 100000
+minibatch_size = 512
+ppo_epochs = 1
+
+gamma = 1.0
+gae_lambda = 0.90
+clip_epsilon = 0.20
+value_coefficient = 0.50
+max_grad_norm = 0.267
+target_kl = 0.02
+advantage_top_fraction = 0.25
+
+learning_rate_numerator = 0.5
+learning_rate_exponent = 1.1
+learning_rate_min = 0.000005
+learning_rate_max = 0.0001
+entropy_start = 0.05
+entropy_power = 0.2
+entropy_min = 0.001
+
+ema_decay = 0.999
+eval_every = 0
+eval_games = 512
+latest_checkpoint_every = 500
+checkpoint_every = 500
+metrics_every = 1
+league_eval_after_training = true
+league_eval_every = 400
+league_eval_maps = 256
+league_eval_seed = 1044
+league_eval_policies = ["ema"]
+league_opponents = ["boss", "random", "hunter", "harvester", "raider", "deathtouch_clock"]
+league_checkpoint_name = "frozen_ema_001313"
+league_checkpoint_path = "checkpoints/conv_001313/terminal.eqx"
+league_checkpoint_sha256 = "23cf2c76ea348ee67b3c0dd796920a03cc2a1268e641d323dd926a5803306bd2"
+league_checkpoint_maps = 128
+league_checkpoint_policy = "ema"
+
+[[training.curriculum]]
+min_generals_distance = 2
+max_generals_distance = 6
+advance_win_rate = 0.60
+
+[[training.curriculum]]
+min_generals_distance = 4
+max_generals_distance = 8
+advance_win_rate = 0.60
+
+[[training.curriculum]]
+min_generals_distance = 6
+max_generals_distance = 13
+advance_win_rate = 0.60
+
+[[training.curriculum]]
+min_generals_distance = 11
+max_generals_distance = 17
+advance_win_rate = 0.60
+
+[[training.curriculum]]
+min_generals_distance = 17
+advance_win_rate = 0.60

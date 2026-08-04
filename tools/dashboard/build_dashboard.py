@@ -1,10 +1,27 @@
 #!/usr/bin/env python3
-"""Generate the live training dashboard HTML from metrics.jsonl."""
-import json, sys, html, datetime
+"""Generate a self-contained live training dashboard from metrics JSONL."""
+import argparse
+import datetime
+import html
+import json
 
-metrics_path = sys.argv[1]
-out_path = sys.argv[2]
-status = sys.argv[3] if len(sys.argv) > 3 else "Running"
+parser = argparse.ArgumentParser()
+parser.add_argument("metrics_path")
+parser.add_argument("out_path")
+parser.add_argument("status", nargs="?", default="Running")
+parser.add_argument("--title", default="smoke_8xh100")
+parser.add_argument(
+    "--subtitle",
+    default=("PPO self-play test run — 8×H100, 2-hour budget · "
+             "generals-bots competition_l7 recipe · 15.3M params"),
+)
+parser.add_argument("--budget-seconds", type=float, default=0.0)
+parser.add_argument("--gpus", type=int, default=8)
+args = parser.parse_args()
+
+metrics_path = args.metrics_path
+out_path = args.out_path
+status = args.status
 
 train_rows, eval_rows = [], []
 with open(metrics_path) as f:
@@ -38,10 +55,12 @@ now = datetime.datetime.now().strftime("%H:%M %Z").strip()
 today = datetime.date.today().isoformat()
 
 payload = json.dumps({"train": train_rows, "evals": eval_rows,
-                      "updated": f"{today} {now}", "status": status},
+                      "updated": f"{today} {now}", "status": status,
+                      "budget_seconds": args.budget_seconds,
+                      "gpu_count": args.gpus},
                      separators=(",", ":"))
 
-page = """<title>smoke_8xh100 live training</title>
+page = """<title>__PAGE_TITLE__ live training</title>
 <style>
   :root {
     color-scheme: light;
@@ -125,11 +144,11 @@ page = """<title>smoke_8xh100 live training</title>
 </style>
 <div class="wrap">
   <header>
-    <h1>smoke_8xh100</h1>
+    <h1>__PAGE_TITLE__</h1>
     <span id="chip" class="chip running">Running</span>
     <span class="updated" id="updated"></span>
   </header>
-  <p class="sub">PPO self-play test run &mdash; 8&times;H100, 2-hour budget &middot; generals-bots competition_l7 recipe &middot; 15.3M params</p>
+  <p class="sub">__SUBTITLE__</p>
   <div class="progress" aria-hidden="true"><div id="pbar" style="width:0%"></div></div>
   <div class="tiles" id="tiles"></div>
   <div class="grid" id="charts"></div>
@@ -157,15 +176,15 @@ const last = T[T.length - 1] || {};
 // leg 1 ran 2h (7200s budget, ended iter 557); leg 2 resumed from iter 540
 // with its own process-relative wall clock and a 2.5h (9000s) budget.
 const inLeg2 = (last.iteration ?? 0) > 557 || (last.iteration > 540 && last.wall_seconds < 7000 && T.some(r => r.iteration === 1));
-const legBudget = inLeg2 ? 9000 : 7200;
-const legName = inLeg2 ? "2.5h leg-2 budget" : "2h leg-1 budget";
+const legBudget = DATA.budget_seconds || (inLeg2 ? 9000 : 7200);
+const legName = DATA.budget_seconds ? (legBudget / 3600).toFixed(1) + "h budget" : (inLeg2 ? "2.5h leg-2 budget" : "2h leg-1 budget");
 const elapsed = last.wall_seconds || 0;
 document.getElementById("pbar").style.width = Math.min(100, elapsed / legBudget * 100).toFixed(1) + "%";
 
 const hours = Math.floor(elapsed / 3600), mins = Math.round((elapsed % 3600) / 60);
 const tiles = [
   ["Iteration", String(last.iteration ?? "\\u2013"), inLeg2 ? "leg 2 (resumed from 540)" : "of ~" + Math.round(legBudget / 10.6) + " expected"],
-  ["Samples / sec", fmt(last.samples_per_second, 0), "across 8 GPUs"],
+  ["Samples / sec", fmt(last.samples_per_second, 0), "across " + DATA.gpu_count + " GPUs"],
   ["Explained variance", fmt(last.explained_variance, 3), "value-net quality"],
   ["Entropy", fmt(last.entropy, 3), "coef " + fmt(last.entropy_coefficient, 4)],
   ["Elapsed", hours + "h " + String(mins).padStart(2, "0") + "m", "of " + legName + " \\u00b7 stage " + (last.stage ?? 0)],
@@ -285,6 +304,9 @@ document.getElementById("tbl").innerHTML =
 </script>
 """
 
+rendered = (page.replace("__PAYLOAD__", payload)
+                .replace("__PAGE_TITLE__", html.escape(args.title))
+                .replace("__SUBTITLE__", html.escape(args.subtitle)))
 with open(out_path, "w") as f:
-    f.write(page.replace("__PAYLOAD__", payload))
+    f.write(rendered)
 print(f"wrote {out_path}: {len(train_rows)} train rows, {len(eval_rows)} eval rows")

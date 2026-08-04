@@ -1,0 +1,11 @@
+{
+  "architecture": "conv_transformer",
+  "checkpoint": "bca-vibe/generals-bot/runs/arch_ab_d448_8xh100_5h_retry1_20260803/branches/conv/terminal.eqx",
+  "checkpoint_sha256": "23cf2c76ea348ee67b3c0dd796920a03cc2a1268e641d323dd926a5803306bd2",
+  "curriculum_stage": 4,
+  "iteration": 1313,
+  "observation_schema": "competition_39",
+  "policy": "ema",
+  "weights_bytes": 25453575,
+  "weights_sha256": "a2d91d014a237877e712df55c0b374a74071b92ad35bb6541e899e0e46d7b50c"
+}

@@ -11,6 +11,7 @@ class FakeRun:
         self.defined_metrics = []
         self.logged = []
         self.finished = False
+        self.summary = {}
 
     def define_metric(self, *args, **kwargs):
         self.defined_metrics.append((args, kwargs))
@@ -20,6 +21,12 @@ class FakeRun:
 
     def finish(self):
         self.finished = True
+
+
+class FakeTable:
+    def __init__(self, *, columns, data):
+        self.columns = columns
+        self.data = data
 
 
 def test_tracking_is_disabled_by_default(monkeypatch):
@@ -70,6 +77,7 @@ def test_tracking_initializes_grouped_resume_run_and_namespaces_metrics(monkeypa
             "iteration": 541,
             "stage": 2,
             "loss": 1.25,
+            "approximate_kl": 0.012,
             "samples_per_second": 390_000.0,
         }
     )
@@ -80,7 +88,8 @@ def test_tracking_initializes_grouped_resume_run_and_namespaces_metrics(monkeypa
     assert fake_run.logged[0] == {
         "iteration": 541,
         "curriculum/stage": 2,
-        "training/loss": 1.25,
+        "ppo/loss": 1.25,
+        "ppo/approx_kl": 0.012,
         "performance/samples_per_second": 390_000.0,
     }
     assert fake_run.logged[1]["evaluation/score"] == 0.625
@@ -105,3 +114,46 @@ def test_tracking_failure_does_not_abort_training(monkeypatch, capsys):
 
     assert not tracker.active
     assert "continuing locally" in capsys.readouterr().err
+
+
+def test_checkpoint_export_table_upserts_one_row_per_iteration(monkeypatch):
+    fake_run = FakeRun()
+    monkeypatch.setitem(
+        sys.modules,
+        "wandb",
+        SimpleNamespace(init=lambda **_kwargs: fake_run, Table=FakeTable),
+    )
+    tracker = WandbTracker.start(
+        TrainingConfig(wandb_project="generals-bots", wandb_run_id="continuation"),
+        start_iteration=1313,
+        resume="terminal.eqx",
+        device_count=8,
+    )
+    tracker.log_checkpoint_export(
+        {
+            "iteration": 1500,
+            "requested": True,
+            "checkpoint_sha256": "a" * 64,
+            "checkpoint_bytes": 10,
+        }
+    )
+    tracker.log_checkpoint_export(
+        {
+            "iteration": 1500,
+            "requested": True,
+            "complete": True,
+            "hash_verified": True,
+            "competition_sha256": "b" * 64,
+            "remote_checkpoint_path": "hf://checkpoint",
+            "remote_competition_path": "hf://competition",
+        }
+    )
+    tables = [
+        record["checkpoint/exports"]
+        for record in fake_run.logged
+        if "checkpoint/exports" in record
+    ]
+    assert len(tables[-1].data) == 1
+    assert tables[-1].data[0][0] == 1500
+    assert tables[-1].data[0][1] == "a" * 64
+    assert tables[-1].data[0][2] == "b" * 64
