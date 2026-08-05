@@ -24,6 +24,7 @@ from jax.sharding import PartitionSpec as P
 from generals.core.env import GeneralsEnv
 from generals.core.game import get_observation
 
+from .actions import CELL_COUNT, MOVE_PLANES, PASS_INDEX
 from .config import CurriculumStage, TrainingConfig
 from .conv_model import ConvCompetitionTransformer, calibrate_conv_token_rms
 from .evaluation import (
@@ -236,6 +237,21 @@ def _entropy_coefficient(config: TrainingConfig, iteration: int) -> float:
         config.entropy_start / (iteration + 1) ** config.entropy_power,
         config.entropy_min,
     )
+
+
+def _castle_intervention_strength(
+    config: TrainingConfig, iteration_number: int
+) -> float:
+    """Return the treatment strength for one one-based global iteration."""
+    full_until = config.castle_intervention_full_until
+    anneal_until = config.castle_intervention_anneal_until
+    if full_until <= 0:
+        return 0.0
+    if iteration_number <= full_until:
+        return 1.0
+    if anneal_until <= full_until or iteration_number >= anneal_until:
+        return 0.0
+    return (anneal_until - iteration_number) / (anneal_until - full_until)
 
 
 def _write_metrics(path: Path, metrics: dict) -> None:
@@ -811,8 +827,22 @@ def make_prepare_batch(config: TrainingConfig):
     )
 
     @partial(jax.pmap, axis_name="devices")
-    def prepare_batch(rewards, values, next_values, terminated, truncated, winners):
-        advantages = compute_gae(
+    def prepare_batch(
+        rewards,
+        actor_rewards,
+        potential_rewards,
+        values,
+        next_values,
+        terminated,
+        truncated,
+        winners,
+        actions,
+        tactical_build_masks,
+        selected_tactical_build,
+        base_policy_statistics,
+        behavior_policy_statistics,
+    ):
+        raw_advantages = compute_gae(
             rewards,
             values,
             next_values,
@@ -821,12 +851,30 @@ def make_prepare_batch(config: TrainingConfig):
             config.gamma,
             config.gae_lambda,
         )
-        returns = advantages + values
+        actor_advantages = compute_gae(
+            actor_rewards,
+            values,
+            next_values,
+            terminated,
+            truncated,
+            config.gamma,
+            config.gae_lambda,
+        )
+        returns = raw_advantages + values
 
-        mean = jax.lax.pmean(advantages.mean(), axis_name="devices")
-        mean_square = jax.lax.pmean((advantages**2).mean(), axis_name="devices")
-        raw_std = jnp.sqrt(jnp.maximum(mean_square - mean**2, 0.0))
-        normalized = (advantages - mean) / (raw_std + 1e-8)
+        actor_mean = jax.lax.pmean(actor_advantages.mean(), axis_name="devices")
+        actor_mean_square = jax.lax.pmean(
+            (actor_advantages**2).mean(), axis_name="devices"
+        )
+        actor_std = jnp.sqrt(
+            jnp.maximum(actor_mean_square - actor_mean**2, 0.0)
+        )
+        raw_mean = jax.lax.pmean(raw_advantages.mean(), axis_name="devices")
+        raw_mean_square = jax.lax.pmean(
+            (raw_advantages**2).mean(), axis_name="devices"
+        )
+        raw_std = jnp.sqrt(jnp.maximum(raw_mean_square - raw_mean**2, 0.0))
+        normalized = (actor_advantages - actor_mean) / (actor_std + 1e-8)
         _, indices = jax.lax.top_k(jnp.abs(normalized.reshape(-1)), kept_samples)
 
         # Episode outcome counts for player-0 seats, summed across devices;
@@ -855,14 +903,64 @@ def make_prepare_batch(config: TrainingConfig):
             return_variance, 1e-8
         )
 
+        build_start = MOVE_PLANES * CELL_COUNT
+        build_actions = (actions >= build_start) & (actions < PASS_INDEX)
+        build_count = jax.lax.psum(build_actions.sum(), axis_name="devices")
+        retained_build_count = jax.lax.psum(
+            build_actions.reshape(-1)[indices].sum(), axis_name="devices"
+        )
+        eligible_steps = jax.lax.psum(
+            jnp.any(tactical_build_masks, axis=-1).sum(), axis_name="devices"
+        )
+        selected_tactical_builds = jax.lax.psum(
+            selected_tactical_build.sum(), axis_name="devices"
+        )
+
+        def masked_global_mean(values, condition):
+            total = jax.lax.psum(
+                jnp.where(condition, values, 0.0).sum(), axis_name="devices"
+            )
+            count = jax.lax.psum(condition.sum(), axis_name="devices")
+            return total / jnp.maximum(count, 1)
+
         prep_metrics = {
             "raw_advantage_std": raw_std,
+            "actor_advantage_std": actor_std,
             "mean_reward": jax.lax.pmean(rewards.mean(), axis_name="devices"),
+            "actor_mean_reward": jax.lax.pmean(
+                actor_rewards.mean(), axis_name="devices"
+            ),
+            "potential_reward_mean": jax.lax.pmean(
+                potential_rewards.mean(), axis_name="devices"
+            ),
+            "potential_reward_abs_mean": jax.lax.pmean(
+                jnp.abs(potential_rewards).mean(), axis_name="devices"
+            ),
             "episodes": episodes,
             "wins": wins,
             "losses": losses,
             "explained_variance": explained_variance,
+            "tactical_eligible_steps": eligible_steps,
+            "tactical_selected_builds": selected_tactical_builds,
+            "rollout_builds": build_count,
+            "retained_builds": retained_build_count,
+            "build_top_filter_retention": retained_build_count
+            / jnp.maximum(build_count, 1),
+            "build_actor_advantage_mean": masked_global_mean(
+                actor_advantages, build_actions
+            ),
+            "build_raw_advantage_mean": masked_global_mean(
+                raw_advantages, build_actions
+            ),
         }
+        for name, values in base_policy_statistics.items():
+            prep_metrics[f"underlying_policy_{name}"] = jax.lax.pmean(
+                values.mean(), axis_name="devices"
+            )
+        for name, values in behavior_policy_statistics.items():
+            prep_metrics[f"behavior_policy_{name}"] = jax.lax.pmean(
+                values.mean(), axis_name="devices"
+            )
         return normalized, returns, indices, prep_metrics
 
     return prepare_batch
@@ -885,7 +983,15 @@ def make_ema_step(config: TrainingConfig):
 
 def make_update_shard(config: TrainingConfig, static, optimizer):
     @partial(jax.pmap, axis_name="devices")
-    def update_shard(params, opt_state, batch, indices, rng, entropy_coefficient):
+    def update_shard(
+        params,
+        opt_state,
+        batch,
+        indices,
+        rng,
+        entropy_coefficient,
+        tactical_build_logit_boost,
+    ):
         # Split on-device (was an eager vmap over device keys per epoch);
         # keys[0]/keys[1] match the previous split_keys[:, 0]/[:, 1] exactly.
         keys = jax.random.split(rng)
@@ -906,6 +1012,7 @@ def make_update_shard(config: TrainingConfig, static, optimizer):
             value_min=config.value_min,
             value_max=config.value_max,
             hl_gauss_sigma=config.hl_gauss_sigma,
+            tactical_build_logit_boost=tactical_build_logit_boost,
             axis_name="devices",
         )
         params, _ = eqx.partition(shard_network, eqx.is_inexact_array)
@@ -1167,7 +1274,16 @@ def train(
     key, rollout_key = jax.random.split(key)
     rollout_keys = jax.random.split(rollout_key, jax.device_count())
 
-    def rollout_shard(params, states, rng, mem_zero, mem_one, pool_shard):
+    def rollout_shard(
+        params,
+        states,
+        rng,
+        mem_zero,
+        mem_one,
+        pool_shard,
+        potential_shaping_scale,
+        tactical_build_logit_boost,
+    ):
         shard_network = eqx.combine(params, static)
         return collect_self_play_rollout(
             states,
@@ -1179,6 +1295,16 @@ def train(
             mem_one,
             config.num_steps,
             observation_schema=config.observation_schema,
+            potential_shaping_scale=potential_shaping_scale,
+            tactical_build_logit_boost=tactical_build_logit_boost,
+            tactical_build_post_reserve=config.tactical_build_post_reserve,
+            tactical_build_payback_margin=config.tactical_build_payback_margin,
+            tactical_build_remembered_enemy_turns=(
+                config.tactical_build_remembered_enemy_turns
+            ),
+            tactical_build_enemy_safety_radius=(
+                config.tactical_build_enemy_safety_radius
+            ),
         )
 
     rollout_pmapped = jax.pmap(rollout_shard)
@@ -1225,6 +1351,23 @@ def train(
                 f"capturing {trace_iterations} iterations to {trace_dir}"
             )
         iteration_started = time.perf_counter()
+        intervention_strength = _castle_intervention_strength(
+            config, iteration_number
+        )
+        potential_shaping_scale = (
+            intervention_strength * config.castle_potential_scale
+            if config.actor_potential_shaping
+            else 0.0
+        )
+        tactical_build_logit_boost = (
+            intervention_strength * config.tactical_build_logit_boost
+        )
+        potential_scale_by_device = np.full(
+            (device_count,), potential_shaping_scale, dtype=np.float32
+        )
+        build_boost_by_device = np.full(
+            (device_count,), tactical_build_logit_boost, dtype=np.float32
+        )
         rollout_started = time.perf_counter()
         states, rollout, rollout_keys, memory_zero, memory_one = rollout_pmapped(
             parameters,
@@ -1233,6 +1376,8 @@ def train(
             memory_zero,
             memory_one,
             pool_replicated,
+            potential_scale_by_device,
+            build_boost_by_device,
         )
         if config.debug_timing:
             jax.block_until_ready(states)
@@ -1241,18 +1386,36 @@ def train(
             observations,
             histories,
             masks,
+            tactical_build_masks,
             actions,
             old_log_probs,
             values,
             next_values,
             rewards,
+            actor_rewards,
+            potential_rewards,
             terminated,
             truncated,
             winners,
+            base_policy_statistics,
+            behavior_policy_statistics,
+            selected_tactical_build,
         ) = rollout
 
         advantages, returns, sample_indices, prep_metrics = prepare_batch(
-            rewards, values, next_values, terminated, truncated, winners
+            rewards,
+            actor_rewards,
+            potential_rewards,
+            values,
+            next_values,
+            terminated,
+            truncated,
+            winners,
+            actions,
+            tactical_build_masks,
+            selected_tactical_build,
+            base_policy_statistics,
+            behavior_policy_statistics,
         )
         batch = (
             observations,
@@ -1262,6 +1425,7 @@ def train(
             old_log_probs,
             advantages,
             returns,
+            tactical_build_masks,
         )
 
         update_started = time.perf_counter()
@@ -1279,6 +1443,7 @@ def train(
                 sample_indices,
                 rollout_keys,
                 entropy_by_device,
+                build_boost_by_device,
             )
             epochs_used += 1
             # The KL early stop only matters when there is a next epoch to
@@ -1336,6 +1501,9 @@ def train(
             "explained_variance": explained_variance,
             "learning_rate": current_learning_rate,
             "entropy_coefficient": entropy_coefficient,
+            "castle_intervention_strength": intervention_strength,
+            "castle_potential_shaping_scale": potential_shaping_scale,
+            "castle_tactical_logit_boost": tactical_build_logit_boost,
             "epochs_used": epochs_used,
             **{name: float(value) for name, value in host_metrics.items()},
         }
@@ -1547,6 +1715,9 @@ def train(
                 tracker.log_evaluation(timing_record)
 
         del rollout, batch, observations, histories, masks, actions, old_log_probs
+        del tactical_build_masks, actor_rewards, potential_rewards
+        del base_policy_statistics, behavior_policy_statistics
+        del selected_tactical_build
         del values, next_values, rewards, terminated, truncated, winners
         del advantages, returns, sample_indices
 

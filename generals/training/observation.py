@@ -45,6 +45,7 @@ class ObservationMemory(NamedTuple):
     ever_seen: jax.Array
     ever_seen_enemy: jax.Array
     last_seen_enemy_army: jax.Array
+    last_seen_enemy_owned: jax.Array
     last_seen_enemy_age: jax.Array
     opponent_army_history: jax.Array
     opponent_land_history: jax.Array
@@ -67,6 +68,7 @@ def init_observation_memory(
         ever_seen=jnp.zeros(spatial, dtype=jnp.bool_),
         ever_seen_enemy=jnp.zeros(spatial, dtype=jnp.bool_),
         last_seen_enemy_army=jnp.zeros(spatial, dtype=jnp.float32),
+        last_seen_enemy_owned=jnp.zeros(spatial, dtype=jnp.bool_),
         last_seen_enemy_age=jnp.zeros(spatial, dtype=jnp.float32),
         opponent_army_history=jnp.zeros((temporal_window,), dtype=jnp.float32),
         opponent_land_history=jnp.zeros((temporal_window,), dtype=jnp.float32),
@@ -144,6 +146,12 @@ def augment_observation(
     last_seen_enemy_army = jnp.where(
         enemy_visible, enemy_army, memory.last_seen_enemy_army
     )
+    # Unlike the input channels, tactical training exploration needs to know
+    # whether a remembered cell was enemy-owned, including a zero-army cell.
+    # Refresh every visible cell so stale ownership is cleared on recapture.
+    last_seen_enemy_owned = jnp.where(
+        visible, observation.opponent_cells, memory.last_seen_enemy_owned
+    )
     last_seen_enemy_age = jnp.where(
         enemy_visible, 0.0, memory.last_seen_enemy_age + 1.0
     )
@@ -215,6 +223,7 @@ def augment_observation(
         ever_seen=ever_seen,
         ever_seen_enemy=ever_seen_enemy,
         last_seen_enemy_army=last_seen_enemy_army,
+        last_seen_enemy_owned=last_seen_enemy_owned,
         last_seen_enemy_age=last_seen_enemy_age,
         opponent_army_history=opponent_army_history,
         opponent_land_history=opponent_land_history,

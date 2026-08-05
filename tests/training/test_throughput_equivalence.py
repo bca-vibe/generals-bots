@@ -113,8 +113,23 @@ def test_prepare_batch_matches_pre_refactor_pipeline():
 
     # --- fused implementation under test ---
     prepare_batch = make_prepare_batch(config)
+    actions = jnp.zeros_like(winners)
+    tactical_build_masks = jnp.zeros((*winners.shape, 21, 21), dtype=jnp.bool_)
+    selected_tactical_build = jnp.zeros_like(terminated)
     normalized, returns, indices, prep_metrics = prepare_batch(
-        rewards, values, next_values, terminated, truncated, winners
+        rewards,
+        rewards,
+        jnp.zeros_like(rewards),
+        values,
+        next_values,
+        terminated,
+        truncated,
+        winners,
+        actions,
+        tactical_build_masks,
+        selected_tactical_build,
+        {},
+        {},
     )
     prep_metrics = jax.device_get(prep_metrics)
     prep_metrics = {name: value[0] for name, value in prep_metrics.items()}
@@ -187,7 +202,17 @@ def _tiny_network_and_batch(config: TrainingConfig, seed: int = 2):
     old_log_probs = jnp.asarray(rng.normal(size=shape), dtype=jnp.float32)
     advantages = jnp.asarray(rng.normal(size=shape), dtype=jnp.float32)
     returns = jnp.asarray(rng.normal(size=shape), dtype=jnp.float32)
-    batch = (observations, histories, masks, actions, old_log_probs, advantages, returns)
+    tactical_build_masks = jnp.zeros((*shape, 21, 21), dtype=jnp.bool_)
+    batch = (
+        observations,
+        histories,
+        masks,
+        actions,
+        old_log_probs,
+        advantages,
+        returns,
+        tactical_build_masks,
+    )
     indices = jnp.broadcast_to(jnp.arange(total, dtype=jnp.int32), (DEVICES, total))
     return network, batch, indices
 
@@ -228,6 +253,7 @@ def test_update_shard_matches_pre_refactor_update():
             value_min=config.value_min,
             value_max=config.value_max,
             hl_gauss_sigma=config.hl_gauss_sigma,
+            tactical_build_logit_boost=0.0,
             axis_name="devices",
         )
         params, _ = eqx.partition(shard_network, eqx.is_inexact_array)
@@ -240,8 +266,15 @@ def test_update_shard_matches_pre_refactor_update():
 
     # --- implementation under test: RNG split happens inside ---
     update_shard = make_update_shard(config, static, optimizer)
+    build_boost = np.zeros((DEVICES,), dtype=np.float32)
     new_params, _, next_keys, metrics = update_shard(
-        parameters, optimizer_state, batch, indices, device_keys, entropy
+        parameters,
+        optimizer_state,
+        batch,
+        indices,
+        device_keys,
+        entropy,
+        build_boost,
     )
 
     np.testing.assert_array_equal(next_keys, ref_next_keys)

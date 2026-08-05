@@ -130,6 +130,18 @@ class TrainingConfig:
     target_kl: float = 0.02
     advantage_top_fraction: float = 0.25
 
+    # Optional castle-discovery treatment. The critic always targets the raw
+    # terminal return; potential shaping affects only the actor's GAE stream.
+    actor_potential_shaping: bool = False
+    castle_potential_scale: float = 1.0
+    tactical_build_logit_boost: float = 0.0
+    castle_intervention_full_until: int = 0
+    castle_intervention_anneal_until: int = 0
+    tactical_build_post_reserve: int = 10
+    tactical_build_payback_margin: int = 25
+    tactical_build_remembered_enemy_turns: int = 50
+    tactical_build_enemy_safety_radius: int = 3
+
     learning_rate_numerator: float = 0.5
     learning_rate_exponent: float = 1.1
     learning_rate_min: float = 5e-6
@@ -296,6 +308,28 @@ class TrainingConfig:
             raise ValueError(
                 "league_periodic_raw_max_overhead_fraction must be between zero and one"
             )
+        if self.castle_potential_scale < 0 or self.tactical_build_logit_boost < 0:
+            raise ValueError("castle shaping scale and build-logit boost must be non-negative")
+        if (
+            self.castle_intervention_full_until < 0
+            or self.castle_intervention_anneal_until < 0
+            or self.castle_intervention_anneal_until
+            < self.castle_intervention_full_until
+        ):
+            raise ValueError(
+                "castle intervention boundaries must be non-negative and anneal_until "
+                "must be at least full_until"
+            )
+        if any(
+            value < 0
+            for value in (
+                self.tactical_build_post_reserve,
+                self.tactical_build_payback_margin,
+                self.tactical_build_remembered_enemy_turns,
+                self.tactical_build_enemy_safety_radius,
+            )
+        ):
+            raise ValueError("tactical build gate settings must be non-negative")
         if (self.league_eval_after_training or self.league_eval_every) and not self.league_opponents:
             raise ValueError(
                 "league_opponents must be non-empty when league evaluation is enabled"

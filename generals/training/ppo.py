@@ -6,6 +6,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from .castle_exploration import apply_tactical_build_logit_boost
+
 
 def compute_gae(
     rewards,
@@ -68,10 +70,20 @@ def ppo_epoch(
     value_min: float,
     value_max: float,
     hl_gauss_sigma: float,
+    tactical_build_logit_boost,
     axis_name: str,
 ):
     """Run one shuffled PPO epoch on a single accelerator shard."""
-    observations, histories, masks, actions, old_log_probs, advantages, returns = batch
+    (
+        observations,
+        histories,
+        masks,
+        actions,
+        old_log_probs,
+        advantages,
+        returns,
+        tactical_build_masks,
+    ) = batch
     total = observations.shape[0] * observations.shape[1]
     observations = observations.reshape(total, *observations.shape[2:])
     histories = histories.reshape(total, *histories.shape[2:])
@@ -80,6 +92,7 @@ def ppo_epoch(
     old_log_probs = old_log_probs.reshape(total)
     advantages = advantages.reshape(total)
     returns = returns.reshape(total)
+    tactical_build_masks = tactical_build_masks.reshape(total, *tactical_build_masks.shape[2:])
 
     permutation = jax.random.permutation(key, sample_indices.shape[0])
     minibatches = sample_indices[permutation].reshape(-1, minibatch_size)
@@ -94,13 +107,30 @@ def ppo_epoch(
             old_log_probs[indices],
             advantages[indices],
             returns[indices],
+            tactical_build_masks[indices],
         )
 
         def loss_fn(candidate):
-            def sample_loss(obs, history, mask, action, old_log_prob, advantage, target):
-                _, _, _, log_prob, entropy, value_logits = candidate(
-                    obs, history, mask, None, action
+            def sample_loss(
+                obs,
+                history,
+                mask,
+                action,
+                old_log_prob,
+                advantage,
+                target,
+                tactical_build_mask,
+            ):
+                logits, _, value_logits = candidate.forward(obs, history, mask)
+                behavior_logits = apply_tactical_build_logit_boost(
+                    logits,
+                    tactical_build_mask,
+                    tactical_build_logit_boost,
                 )
+                log_prob = jax.nn.log_softmax(behavior_logits)[action]
+                probabilities = jax.nn.softmax(logits)
+                log_probabilities = jax.nn.log_softmax(logits)
+                entropy = -jnp.sum(probabilities * log_probabilities)
                 log_ratio = log_prob - old_log_prob
                 ratio = jnp.exp(log_ratio)
                 unclipped = ratio * advantage
