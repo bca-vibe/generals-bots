@@ -283,6 +283,7 @@ def _request_checkpoint_publication(run_dir: Path, metadata: dict) -> dict:
         "complete": False,
         "hash_verified": False,
         "competition_bundle_available": False,
+        "raw_competition_bundle_available": False,
     }
     _write_json_atomic(
         run_dir / "publish_requests" / f"checkpoint_{metadata['iteration']:06d}.json",
@@ -322,6 +323,9 @@ def _ingest_publish_status(
                     ),
                     "checkpoint/competition_bundle_available": int(
                         record.get("competition_bundle_available", False)
+                    ),
+                    "checkpoint/raw_competition_bundle_available": int(
+                        record.get("raw_competition_bundle_available", False)
                     ),
                     "checkpoint/hf_upload_seconds": record.get("upload_seconds", 0.0),
                     "checkpoint/hf_remote_path": record.get("remote_path", ""),

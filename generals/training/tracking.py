@@ -173,6 +173,9 @@ class WandbTracker:
             "checkpoint/competition_bundle_available": int(
                 record.get("competition_bundle_available", False)
             ),
+            "checkpoint/raw_competition_bundle_available": int(
+                record.get("raw_competition_bundle_available", False)
+            ),
         }
         if "upload_seconds" in record:
             metrics["checkpoint/hf_upload_seconds"] = record["upload_seconds"]
@@ -181,8 +184,14 @@ class WandbTracker:
             ("competition_bytes", "checkpoint/competition_bytes"),
             ("checkpoint_sha256", "checkpoint/full_sha256"),
             ("competition_sha256", "checkpoint/competition_sha256"),
+            ("competition_raw_bytes", "checkpoint/competition_raw_bytes"),
+            ("competition_raw_sha256", "checkpoint/competition_raw_sha256"),
             ("remote_checkpoint_path", "checkpoint/hf_checkpoint_path"),
             ("remote_competition_path", "checkpoint/hf_competition_path"),
+            (
+                "remote_raw_competition_path",
+                "checkpoint/hf_raw_competition_path",
+            ),
         ):
             if source in record:
                 metrics[destination] = record[source]
@@ -196,8 +205,10 @@ class WandbTracker:
             "iteration",
             "checkpoint_sha256",
             "competition_sha256",
+            "competition_raw_sha256",
             "remote_checkpoint_path",
             "remote_competition_path",
+            "remote_raw_competition_path",
             "hash_verified",
         ]
         data = [

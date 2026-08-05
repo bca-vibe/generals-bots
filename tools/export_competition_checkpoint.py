@@ -1,4 +1,4 @@
-"""Export an EMA policy from a full training checkpoint as a CPU competition bundle."""
+"""Export a raw or EMA policy from a full checkpoint as a competition bundle."""
 
 from __future__ import annotations
 
@@ -96,6 +96,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-sha256", required=True)
     parser.add_argument("--source", required=True, help="Provenance URI for metadata")
     parser.add_argument(
+        "--policy",
+        choices=("raw", "ema"),
+        default="ema",
+        help="Which checkpoint parameter tree to package",
+    )
+    parser.add_argument(
         "--template-dir", default="competition/agents/conv_1313"
     )
     return parser.parse_args()
@@ -128,9 +134,10 @@ def main() -> None:
         jnp.int32(0),
         key,
     )
-    _, _, ema, iteration, stage, _ = eqx.tree_deserialise_leaves(
+    raw, _, ema, iteration, stage, _ = eqx.tree_deserialise_leaves(
         checkpoint, skeleton
     )
+    selected_policy = raw if args.policy == "raw" else ema
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -141,7 +148,7 @@ def main() -> None:
     output = output_dir / "weights.npz"
     packed = {
         name: np.asarray(value.astype(jnp.bfloat16)).view(np.uint16)
-        for name, value in _extract_weights(ema).items()
+        for name, value in _extract_weights(selected_policy).items()
     }
     np.savez_compressed(output, **packed)
     metadata = {
@@ -151,7 +158,7 @@ def main() -> None:
         "curriculum_stage": int(stage),
         "iteration": int(iteration),
         "observation_schema": config.observation_schema,
-        "policy": "ema",
+        "policy": args.policy,
         "weights_bytes": output.stat().st_size,
         "weights_sha256": _sha256(output),
     }

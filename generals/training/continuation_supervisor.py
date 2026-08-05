@@ -71,7 +71,6 @@ def _prepare_publication(
     temporary.mkdir(parents=True)
     full_destination = temporary / "training_checkpoint.eqx"
     _hardlink_or_copy(checkpoint, full_destination)
-    competition_dir = temporary / "competition_ema"
     source = f"{hf_root}/checkpoints/iteration_{iteration:06d}/training_checkpoint.eqx"
     environment = os.environ.copy()
     environment.update(
@@ -84,29 +83,38 @@ def _prepare_publication(
             "OPENBLAS_NUM_THREADS": "1",
         }
     )
-    subprocess.run(
-        [
-            sys.executable,
-            "tools/export_competition_checkpoint.py",
-            "--config",
-            str(config_path),
-            "--checkpoint",
-            str(checkpoint),
-            "--output-dir",
-            str(competition_dir),
-            "--expected-sha256",
-            actual_sha256,
-            "--source",
-            source,
-        ],
-        check=True,
-        env=environment,
-    )
-    bundle = temporary / "competition_ema.zip"
-    with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_STORED) as archive:
-        for file_path in sorted(competition_dir.iterdir()):
-            if file_path.is_file():
-                archive.write(file_path, arcname=file_path.name)
+    bundles = {}
+    for policy in ("ema", "raw"):
+        competition_dir = temporary / f"competition_{policy}"
+        subprocess.run(
+            [
+                sys.executable,
+                "tools/export_competition_checkpoint.py",
+                "--config",
+                str(config_path),
+                "--checkpoint",
+                str(checkpoint),
+                "--output-dir",
+                str(competition_dir),
+                "--expected-sha256",
+                actual_sha256,
+                "--source",
+                source,
+                "--policy",
+                policy,
+            ],
+            check=True,
+            env=environment,
+        )
+        bundle = temporary / f"competition_{policy}.zip"
+        with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_STORED) as archive:
+            for file_path in sorted(competition_dir.iterdir()):
+                if file_path.is_file():
+                    archive.write(file_path, arcname=file_path.name)
+        bundles[policy] = bundle
+
+    ema_bundle = bundles["ema"]
+    raw_bundle = bundles["raw"]
 
     record = {
         **request,
@@ -115,9 +123,13 @@ def _prepare_publication(
         "checkpoint_sha256": actual_sha256,
         "checkpoint_bytes": full_destination.stat().st_size,
         "competition_path": str(final_dir / "competition_ema.zip"),
-        "competition_sha256": _sha256(bundle),
-        "competition_bytes": bundle.stat().st_size,
+        "competition_sha256": _sha256(ema_bundle),
+        "competition_bytes": ema_bundle.stat().st_size,
         "competition_bundle_available": True,
+        "competition_raw_path": str(final_dir / "competition_raw.zip"),
+        "competition_raw_sha256": _sha256(raw_bundle),
+        "competition_raw_bytes": raw_bundle.stat().st_size,
+        "raw_competition_bundle_available": True,
         "remote_path": f"{hf_root}/checkpoints/iteration_{iteration:06d}",
         "remote_checkpoint_path": (
             f"{hf_root}/checkpoints/iteration_{iteration:06d}/"
@@ -125,6 +137,9 @@ def _prepare_publication(
         ),
         "remote_competition_path": (
             f"{hf_root}/checkpoints/iteration_{iteration:06d}/competition_ema.zip"
+        ),
+        "remote_raw_competition_path": (
+            f"{hf_root}/checkpoints/iteration_{iteration:06d}/competition_raw.zip"
         ),
     }
     _write_json_atomic(temporary / "manifest.json", record)
