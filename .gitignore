@@ -181,6 +181,10 @@ figures/
 checkpoints/
 uv.lock
 .jax_cache/
+/artifacts/
+runs/**/results.tar
+runs/**/complete_results.tar
+runs/**/remote_bundle/
 
 # macOS
 .DS_Store

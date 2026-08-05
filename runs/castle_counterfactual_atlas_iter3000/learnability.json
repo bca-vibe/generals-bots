@@ -1,0 +1,329 @@
+{
+  "descriptive_fixed_rules": {
+    "army_and_land_margin_negative": {
+      "conditional_build_effect": 0.07970798760652542,
+      "overall_uplift": 0.033172123015873016,
+      "policy_score": 0.539000496031746,
+      "selection_rate": 0.41617063492063494,
+      "source_game_cluster_bootstrap_95": [
+        0.024668123020162795,
+        0.041544067889880756
+      ]
+    },
+    "army_margin_negative": {
+      "conditional_build_effect": 0.0538194440305233,
+      "overall_uplift": 0.026429191468253968,
+      "policy_score": 0.532257564484127,
+      "selection_rate": 0.49107142857142855,
+      "source_game_cluster_bootstrap_95": [
+        0.016975731396344153,
+        0.03568144445735356
+      ]
+    },
+    "land_margin_le_-10": {
+      "conditional_build_effect": 0.07610971480607986,
+      "overall_uplift": 0.02253844246031746,
+      "policy_score": 0.5283668154761905,
+      "selection_rate": 0.2961309523809524,
+      "source_game_cluster_bootstrap_95": [
+        0.015956445287556197,
+        0.029213438544643464
+      ]
+    },
+    "land_margin_le_-10_and_garrison_ge_10": {
+      "conditional_build_effect": 0.06652980297803879,
+      "overall_uplift": 0.013563368055555556,
+      "policy_score": 0.5193917410714286,
+      "selection_rate": 0.20386904761904762,
+      "source_game_cluster_bootstrap_95": [
+        0.008263225300334456,
+        0.018975447942098
+      ]
+    }
+  },
+  "feature_sets": {
+    "observable": [
+      "turn",
+      "site_cost",
+      "site_army",
+      "post_build_garrison",
+      "own_army",
+      "opponent_army",
+      "army_margin",
+      "own_land",
+      "opponent_land",
+      "land_margin",
+      "own_castles",
+      "distance_to_general",
+      "distance_to_nearest_own_structure",
+      "legal_build_sites",
+      "actor_value",
+      "total_build_probability",
+      "best_build_probability",
+      "control_probability",
+      "best_build_logit_margin",
+      "best_build_rank"
+    ],
+    "observable_plus_true_enemy_distance": [
+      "turn",
+      "site_cost",
+      "site_army",
+      "post_build_garrison",
+      "own_army",
+      "opponent_army",
+      "army_margin",
+      "own_land",
+      "opponent_land",
+      "land_margin",
+      "own_castles",
+      "distance_to_general",
+      "distance_to_nearest_own_structure",
+      "legal_build_sites",
+      "actor_value",
+      "total_build_probability",
+      "best_build_probability",
+      "control_probability",
+      "best_build_logit_margin",
+      "best_build_rank",
+      "distance_to_enemy_land_true"
+    ]
+  },
+  "forced_build_everywhere_delta": -0.0617869533598423,
+  "learned_selectors": {
+    "observable": {
+      "hist_gradient_boosting": {
+        "first_half_train_second_half_test": {
+          "conditional_build_effect": 0.110391765832901,
+          "control_score": 0.5027281641960144,
+          "overall_uplift": 0.0412326380610466,
+          "policy_score": 0.5439608097076416,
+          "prediction_vs_test_delta_spearman": 0.4672866405961708,
+          "selected_states": 753,
+          "selection_rate": 0.37351190476190477,
+          "source_game_cluster_bootstrap_95": [
+            0.03224376533180475,
+            0.050148255098611115
+          ]
+        },
+        "second_half_train_first_half_test": {
+          "conditional_build_effect": 0.09777462482452393,
+          "control_score": 0.5089285969734192,
+          "overall_uplift": 0.0384114570915699,
+          "policy_score": 0.5473400354385376,
+          "prediction_vs_test_delta_spearman": 0.4905683748283744,
+          "selected_states": 792,
+          "selection_rate": 0.39285714285714285,
+          "source_game_cluster_bootstrap_95": [
+            0.03003874677233398,
+            0.0470022153109312
+          ]
+        },
+        "symmetric": {
+          "conditional_build_effect": 0.10392394822006472,
+          "overall_uplift": 0.0398220494389534,
+          "prediction_vs_test_delta_spearman": 0.4789275077122726,
+          "selection_rate": 0.38318452380952384,
+          "source_game_cluster_bootstrap_95": [
+            0.03192718960344791,
+            0.04757011756300926
+          ]
+        }
+      },
+      "random_forest": {
+        "first_half_train_second_half_test": {
+          "conditional_build_effect": 0.11634474992752075,
+          "control_score": 0.5027281641960144,
+          "overall_uplift": 0.0395895354449749,
+          "policy_score": 0.5423176884651184,
+          "prediction_vs_test_delta_spearman": 0.4540052968180017,
+          "selected_states": 686,
+          "selection_rate": 0.3402777777777778,
+          "source_game_cluster_bootstrap_95": [
+            0.030967890052124858,
+            0.04826206713914871
+          ]
+        },
+        "second_half_train_first_half_test": {
+          "conditional_build_effect": 0.11349797248840332,
+          "control_score": 0.5089285969734192,
+          "overall_uplift": 0.0416046641767025,
+          "policy_score": 0.5505332350730896,
+          "prediction_vs_test_delta_spearman": 0.49909033143835707,
+          "selected_states": 739,
+          "selection_rate": 0.3665674603174603,
+          "source_game_cluster_bootstrap_95": [
+            0.033384088333696126,
+            0.05019276430830359
+          ]
+        },
+        "symmetric": {
+          "conditional_build_effect": 0.11486842105263158,
+          "overall_uplift": 0.0405970998108387,
+          "prediction_vs_test_delta_spearman": 0.47654781412817937,
+          "selection_rate": 0.35342261904761907,
+          "source_game_cluster_bootstrap_95": [
+            0.03263328820466995,
+            0.048564693238586185
+          ]
+        }
+      },
+      "ridge": {
+        "first_half_train_second_half_test": {
+          "conditional_build_effect": 0.08653846383094788,
+          "control_score": 0.5027281641960144,
+          "overall_uplift": 0.0301339291036129,
+          "policy_score": 0.53286212682724,
+          "prediction_vs_test_delta_spearman": 0.37006193983539765,
+          "selected_states": 702,
+          "selection_rate": 0.3482142857142857,
+          "source_game_cluster_bootstrap_95": [
+            0.022647424833849072,
+            0.037693584989756335
+          ]
+        },
+        "second_half_train_first_half_test": {
+          "conditional_build_effect": 0.08794964104890823,
+          "control_score": 0.5089285969734192,
+          "overall_uplift": 0.0303199402987957,
+          "policy_score": 0.539248526096344,
+          "prediction_vs_test_delta_spearman": 0.39822644822564857,
+          "selected_states": 695,
+          "selection_rate": 0.3447420634920635,
+          "source_game_cluster_bootstrap_95": [
+            0.0236236781347543,
+            0.03723024819046259
+          ]
+        },
+        "symmetric": {
+          "conditional_build_effect": 0.08724051539012169,
+          "overall_uplift": 0.0302269347012043,
+          "prediction_vs_test_delta_spearman": 0.38414419403052313,
+          "selection_rate": 0.3464781746031746,
+          "source_game_cluster_bootstrap_95": [
+            0.0235448925755918,
+            0.037153476197272536
+          ]
+        }
+      }
+    },
+    "observable_plus_true_enemy_distance": {
+      "hist_gradient_boosting": {
+        "first_half_train_second_half_test": {
+          "conditional_build_effect": 0.11660691350698471,
+          "control_score": 0.5027281641960144,
+          "overall_uplift": 0.0443638376891613,
+          "policy_score": 0.5470920205116272,
+          "prediction_vs_test_delta_spearman": 0.4898683021681886,
+          "selected_states": 767,
+          "selection_rate": 0.3804563492063492,
+          "source_game_cluster_bootstrap_95": [
+            0.03557462142780423,
+            0.05326175494119525
+          ]
+        },
+        "second_half_train_first_half_test": {
+          "conditional_build_effect": 0.10950986295938492,
+          "control_score": 0.5089285969734192,
+          "overall_uplift": 0.0440538190305233,
+          "policy_score": 0.5529823899269104,
+          "prediction_vs_test_delta_spearman": 0.5133829614178103,
+          "selected_states": 811,
+          "selection_rate": 0.40228174603174605,
+          "source_game_cluster_bootstrap_95": [
+            0.03591483645141125,
+            0.0524088054895401
+          ]
+        },
+        "symmetric": {
+          "conditional_build_effect": 0.11295944233206591,
+          "overall_uplift": 0.0442088283598423,
+          "prediction_vs_test_delta_spearman": 0.5016256317929995,
+          "selection_rate": 0.3913690476190476,
+          "source_game_cluster_bootstrap_95": [
+            0.036435436084866525,
+            0.05187408002093434
+          ]
+        }
+      },
+      "random_forest": {
+        "first_half_train_second_half_test": {
+          "conditional_build_effect": 0.1164371445775032,
+          "control_score": 0.5027281641960144,
+          "overall_uplift": 0.0408916175365448,
+          "policy_score": 0.5436198115348816,
+          "prediction_vs_test_delta_spearman": 0.47166842971455375,
+          "selected_states": 708,
+          "selection_rate": 0.35119047619047616,
+          "source_game_cluster_bootstrap_95": [
+            0.032418777514249084,
+            0.0494975909590721
+          ]
+        },
+        "second_half_train_first_half_test": {
+          "conditional_build_effect": 0.11266447603702545,
+          "control_score": 0.5089285969734192,
+          "overall_uplift": 0.0424727164208889,
+          "policy_score": 0.5514013171195984,
+          "prediction_vs_test_delta_spearman": 0.5094690507620121,
+          "selected_states": 760,
+          "selection_rate": 0.376984126984127,
+          "source_game_cluster_bootstrap_95": [
+            0.03427512478083372,
+            0.05099901771172881
+          ]
+        },
+        "symmetric": {
+          "conditional_build_effect": 0.11448399182561309,
+          "overall_uplift": 0.041682168841362,
+          "prediction_vs_test_delta_spearman": 0.4905687402382829,
+          "selection_rate": 0.36408730158730157,
+          "source_game_cluster_bootstrap_95": [
+            0.033868868462741376,
+            0.04941586907953024
+          ]
+        }
+      },
+      "ridge": {
+        "first_half_train_second_half_test": {
+          "conditional_build_effect": 0.10198275744915009,
+          "control_score": 0.5027281641960144,
+          "overall_uplift": 0.0366753488779068,
+          "policy_score": 0.53940349817276,
+          "prediction_vs_test_delta_spearman": 0.4076965520126074,
+          "selected_states": 725,
+          "selection_rate": 0.35962301587301587,
+          "source_game_cluster_bootstrap_95": [
+            0.029135931609198452,
+            0.044259837735444306
+          ]
+        },
+        "second_half_train_first_half_test": {
+          "conditional_build_effect": 0.10376875847578049,
+          "control_score": 0.5089285969734192,
+          "overall_uplift": 0.0377294160425663,
+          "policy_score": 0.5466579794883728,
+          "prediction_vs_test_delta_spearman": 0.43051864451699723,
+          "selected_states": 733,
+          "selection_rate": 0.3635912698412698,
+          "source_game_cluster_bootstrap_95": [
+            0.03083715634420514,
+            0.04481493160128593
+          ]
+        },
+        "symmetric": {
+          "conditional_build_effect": 0.102880658436214,
+          "overall_uplift": 0.0372023805975914,
+          "prediction_vs_test_delta_spearman": 0.4191075982648023,
+          "selection_rate": 0.36160714285714285,
+          "source_game_cluster_bootstrap_95": [
+            0.030479630315676333,
+            0.044067480880767104
+          ]
+        }
+      }
+    }
+  },
+  "protocol": "5-fold GroupKFold by source game; train on one rollout half, test on the other, then swap halves",
+  "states": 2016,
+  "unique_source_games": 796
+}

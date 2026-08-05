@@ -1,0 +1,242 @@
+{
+  "batch_size": 256,
+  "checkpoint": "/home/dev/value-probe-data/training_checkpoint.eqx",
+  "checkpoint_iteration": 3000,
+  "checkpoint_sha256": "bac6cf4029eac926673109d3a282887007f47eeecb575318e1b236780cad6256",
+  "checkpoint_stage": 4,
+  "config": "generals/training/configs/conv_d448_8xh100_12h_cont_1313.toml",
+  "elapsed_seconds": 204.32813572000305,
+  "map_distribution": "final curriculum stage, exact competition generator",
+  "policies": {
+    "ema": {
+      "build_given_player_game_opportunity_rate": 0.0007615179591318695,
+      "build_per_legal_opportunity_step_rate": 3.6307612617137434e-06,
+      "finished_games": 4096,
+      "first_build_events": [
+        {
+          "aggregate_build_probability": 7.571946480311453e-05,
+          "best_build_rank": 404,
+          "builder_seat": 0,
+          "builder_won": false,
+          "col": 12,
+          "game_index": 908,
+          "game_length": 884,
+          "opponent_army": 394,
+          "opponent_land": 109,
+          "own_army": 303,
+          "own_land": 87,
+          "row": 9,
+          "selected_build_probability": 7.14297711965628e-05,
+          "site_army_before_build": 36,
+          "turn": 372,
+          "winner": 1
+        },
+        {
+          "aggregate_build_probability": 0.1055905669927597,
+          "best_build_rank": 2,
+          "builder_seat": 0,
+          "builder_won": true,
+          "col": 14,
+          "game_index": 1168,
+          "game_length": 568,
+          "opponent_army": 136,
+          "opponent_land": 69,
+          "own_army": 128,
+          "own_land": 60,
+          "row": 14,
+          "selected_build_probability": 0.1055905669927597,
+          "site_army_before_build": 45,
+          "turn": 249,
+          "winner": 0
+        },
+        {
+          "aggregate_build_probability": 1.0132054740097374e-05,
+          "best_build_rank": 342,
+          "builder_seat": 0,
+          "builder_won": false,
+          "col": 13,
+          "game_index": 1665,
+          "game_length": 1153,
+          "opponent_army": 490,
+          "opponent_land": 122,
+          "own_army": 368,
+          "own_land": 98,
+          "row": 13,
+          "selected_build_probability": 7.216375252028229e-06,
+          "site_army_before_build": 80,
+          "turn": 1095,
+          "winner": 1
+        },
+        {
+          "aggregate_build_probability": 1.4052063306735363e-05,
+          "best_build_rank": 228,
+          "builder_seat": 1,
+          "builder_won": false,
+          "col": 1,
+          "game_index": 2027,
+          "game_length": 696,
+          "opponent_army": 254,
+          "opponent_land": 85,
+          "own_army": 228,
+          "own_land": 71,
+          "row": 4,
+          "selected_build_probability": 1.3478096661856398e-05,
+          "site_army_before_build": 50,
+          "turn": 379,
+          "winner": 0
+        },
+        {
+          "aggregate_build_probability": 0.009152207523584366,
+          "best_build_rank": 10,
+          "builder_seat": 1,
+          "builder_won": true,
+          "col": 14,
+          "game_index": 3410,
+          "game_length": 912,
+          "opponent_army": 177,
+          "opponent_land": 93,
+          "own_army": 179,
+          "own_land": 84,
+          "row": 6,
+          "selected_build_probability": 0.009152207523584366,
+          "site_army_before_build": 42,
+          "turn": 195,
+          "winner": 1
+        },
+        {
+          "aggregate_build_probability": 0.03786372393369675,
+          "best_build_rank": 3,
+          "builder_seat": 1,
+          "builder_won": false,
+          "col": 13,
+          "game_index": 3966,
+          "game_length": 401,
+          "opponent_army": 239,
+          "opponent_land": 94,
+          "own_army": 256,
+          "own_land": 106,
+          "row": 8,
+          "selected_build_probability": 0.03786372393369675,
+          "site_army_before_build": 42,
+          "turn": 391,
+          "winner": 0
+        }
+      ],
+      "first_build_turn": {
+        "count": 6,
+        "median": 375.5,
+        "p10": 222.0,
+        "p90": 743.0
+      },
+      "game_length": {
+        "decisive_games": 4039,
+        "decisive_mean": 596.1683585045804,
+        "decisive_median": 591.0,
+        "mean": 604.5712890625,
+        "median": 595.0,
+        "p10": 240.0,
+        "p25": 384.0,
+        "p75": 817.0,
+        "p90": 985.0,
+        "truncated_at_1200": 57,
+        "truncation_rate": 0.013916015625
+      },
+      "games": 4096,
+      "games_with_build_both_sides": 0,
+      "games_with_build_by_result": {
+        "draw": 0,
+        "player_0": 3,
+        "player_1": 3
+      },
+      "games_with_build_either_side": 6,
+      "games_with_build_either_side_rate": 0.00146484375,
+      "games_with_build_either_side_wilson_95": [
+        0.0006715185421635897,
+        0.0031924013142034585
+      ],
+      "games_with_build_exactly_one_side": 6,
+      "games_with_legal_build_opportunity_either_side": 4012,
+      "games_with_no_build": 4090,
+      "logit_diagnostics_on_legal_opportunity_steps": {
+        "by_turn": [
+          {
+            "actual_builds": 1,
+            "legal_opportunity_player_steps": 84019,
+            "mean_aggregate_build_probability": 2.2212532570901277e-06,
+            "turns": "0-199"
+          },
+          {
+            "actual_builds": 4,
+            "legal_opportunity_player_steps": 430651,
+            "mean_aggregate_build_probability": 1.1464898080942134e-06,
+            "turns": "200-399"
+          },
+          {
+            "actual_builds": 0,
+            "legal_opportunity_player_steps": 503950,
+            "mean_aggregate_build_probability": 1.3136133952253878e-06,
+            "turns": "400-599"
+          },
+          {
+            "actual_builds": 0,
+            "legal_opportunity_player_steps": 398910,
+            "mean_aggregate_build_probability": 3.133968621890587e-06,
+            "turns": "600-799"
+          },
+          {
+            "actual_builds": 0,
+            "legal_opportunity_player_steps": 179499,
+            "mean_aggregate_build_probability": 4.359632196695706e-06,
+            "turns": "800-999"
+          },
+          {
+            "actual_builds": 1,
+            "legal_opportunity_player_steps": 55517,
+            "mean_aggregate_build_probability": 7.379347479652405e-06,
+            "turns": "1000-1199"
+          }
+        ],
+        "expected_build_actions_from_probability_mass": 3.7847604751586914,
+        "mean_aggregate_build_probability": 2.2902602268004557e-06,
+        "mean_army_on_strongest_affordable_site": 71.6138854833693,
+        "mean_best_build_logit_margin_vs_best_nonbuild": -16.37459373474121,
+        "mean_best_build_rank": 405.1484134178413,
+        "mean_best_individual_build_probability": 2.1956509499432286e-06,
+        "mean_legal_build_sites": 1.1651718015716355,
+        "per_player_game_best_logit_margin": {
+          "max": 0.5,
+          "median": -10.15625,
+          "p90": -7.9375,
+          "p99": -5.504570484161377
+        },
+        "per_player_game_best_rank": {
+          "best": 1,
+          "median": 21.0,
+          "p1": 4.0,
+          "p10": 7.0
+        },
+        "per_player_game_max_aggregate_build_probability": {
+          "max": 0.1097518652677536,
+          "median": 1.1105245903308969e-05,
+          "p90": 6.987470987951383e-05,
+          "p99": 0.0013034939765930176
+        }
+      },
+      "mean_game_length": 604.5712890625,
+      "opportunity_player_games_that_built": 6,
+      "player_game_build_rate": 0.000732421875,
+      "player_games": 8192,
+      "player_games_with_build": 6,
+      "player_games_with_legal_build_opportunity": 7879,
+      "seat_0_build_actions": 3,
+      "seat_0_games_with_build": 3,
+      "seat_1_build_actions": 3,
+      "seat_1_games_with_build": 3,
+      "total_build_actions": 6,
+      "total_confirmed_new_castles": 6,
+      "total_legal_build_opportunity_player_steps": 1652546
+    }
+  },
+  "sampling": "categorical (same logits and sampling rule as training rollout)",
+  "seed": 20260804
+}

@@ -1,0 +1,224 @@
+{
+  "batch_size": 256,
+  "checkpoint": "/home/dev/castle_audit_inputs/checkpoint_001313.eqx",
+  "checkpoint_iteration": 1313,
+  "checkpoint_sha256": "23cf2c76ea348ee67b3c0dd796920a03cc2a1268e641d323dd926a5803306bd2",
+  "checkpoint_stage": 4,
+  "config": "generals/training/configs/conv_d448_8xh100_12h_cont_1313.toml",
+  "elapsed_seconds": 207.92595462500321,
+  "map_distribution": "final curriculum stage, exact competition generator",
+  "policies": {
+    "ema": {
+      "build_given_player_game_opportunity_rate": 0.08981001727115717,
+      "build_per_legal_opportunity_step_rate": 0.0002772197005904841,
+      "finished_games": 2048,
+      "first_build_turn": {
+        "count": 364,
+        "median": 941.0,
+        "p10": 525.8000000000001,
+        "p90": 1153.1
+      },
+      "games": 2048,
+      "games_with_build_both_sides": 57,
+      "games_with_build_by_result": {
+        "draw": 260,
+        "player_0": 17,
+        "player_1": 30
+      },
+      "games_with_build_either_side": 307,
+      "games_with_build_either_side_rate": 0.14990234375,
+      "games_with_build_either_side_wilson_95": [
+        0.13509793924212155,
+        0.16601765434560206
+      ],
+      "games_with_build_exactly_one_side": 250,
+      "games_with_legal_build_opportunity_either_side": 2036,
+      "games_with_no_build": 1741,
+      "logit_diagnostics_on_legal_opportunity_steps": {
+        "by_turn": [
+          {
+            "actual_builds": 3,
+            "legal_opportunity_player_steps": 116026,
+            "mean_aggregate_build_probability": 4.7600435967746453e-05,
+            "turns": "0-199"
+          },
+          {
+            "actual_builds": 13,
+            "legal_opportunity_player_steps": 318317,
+            "mean_aggregate_build_probability": 6.39291500611333e-05,
+            "turns": "200-399"
+          },
+          {
+            "actual_builds": 37,
+            "legal_opportunity_player_steps": 345000,
+            "mean_aggregate_build_probability": 0.0001032968382904495,
+            "turns": "400-599"
+          },
+          {
+            "actual_builds": 67,
+            "legal_opportunity_player_steps": 323613,
+            "mean_aggregate_build_probability": 0.00019831382944620338,
+            "turns": "600-799"
+          },
+          {
+            "actual_builds": 122,
+            "legal_opportunity_player_steps": 275569,
+            "mean_aggregate_build_probability": 0.00045657743888766856,
+            "turns": "800-999"
+          },
+          {
+            "actual_builds": 211,
+            "legal_opportunity_player_steps": 255558,
+            "mean_aggregate_build_probability": 0.000926179800556833,
+            "turns": "1000-1199"
+          }
+        ],
+        "expected_build_actions_from_probability_mass": 488.1982421875,
+        "mean_aggregate_build_probability": 0.0002987597545143217,
+        "mean_army_on_strongest_affordable_site": 113.64789671026503,
+        "mean_best_build_logit_margin_vs_best_nonbuild": -7.653835773468018,
+        "mean_best_build_rank": 353.0788888936486,
+        "mean_best_individual_build_probability": 0.00016683807189110667,
+        "mean_legal_build_sites": 1.953168841484796,
+        "per_player_game_best_logit_margin": {
+          "max": -0.03125,
+          "median": -5.375,
+          "p90": -3.1484375,
+          "p99": -1.2260937690734863
+        },
+        "per_player_game_best_rank": {
+          "best": 2,
+          "median": 62.0,
+          "p1": 7.0,
+          "p10": 14.0
+        },
+        "per_player_game_max_aggregate_build_probability": {
+          "max": 0.02221774496138096,
+          "median": 0.0004015188605990261,
+          "p90": 0.0022112904116511345,
+          "p99": 0.007884031161665916
+        }
+      },
+      "mean_game_length": 764.4697265625,
+      "opportunity_player_games_that_built": 364,
+      "player_game_build_rate": 0.0888671875,
+      "player_games": 4096,
+      "player_games_with_build": 364,
+      "player_games_with_legal_build_opportunity": 4053,
+      "seat_0_build_actions": 238,
+      "seat_0_games_with_build": 184,
+      "seat_1_build_actions": 215,
+      "seat_1_games_with_build": 180,
+      "total_build_actions": 453,
+      "total_confirmed_new_castles": 453,
+      "total_legal_build_opportunity_player_steps": 1634083
+    },
+    "raw": {
+      "build_given_player_game_opportunity_rate": 0.0,
+      "build_per_legal_opportunity_step_rate": 0.0,
+      "finished_games": 2048,
+      "first_build_turn": {
+        "count": 0,
+        "median": null,
+        "p10": null,
+        "p90": null
+      },
+      "games": 2048,
+      "games_with_build_both_sides": 0,
+      "games_with_build_by_result": {
+        "draw": 0,
+        "player_0": 0,
+        "player_1": 0
+      },
+      "games_with_build_either_side": 0,
+      "games_with_build_either_side_rate": 0.0,
+      "games_with_build_either_side_wilson_95": [
+        0.0,
+        0.0018722006050613785
+      ],
+      "games_with_build_exactly_one_side": 0,
+      "games_with_legal_build_opportunity_either_side": 2011,
+      "games_with_no_build": 2048,
+      "logit_diagnostics_on_legal_opportunity_steps": {
+        "by_turn": [
+          {
+            "actual_builds": 0,
+            "legal_opportunity_player_steps": 45189,
+            "mean_aggregate_build_probability": 1.3185577998108239e-06,
+            "turns": "0-199"
+          },
+          {
+            "actual_builds": 0,
+            "legal_opportunity_player_steps": 157766,
+            "mean_aggregate_build_probability": 7.366131458774765e-07,
+            "turns": "200-399"
+          },
+          {
+            "actual_builds": 0,
+            "legal_opportunity_player_steps": 157498,
+            "mean_aggregate_build_probability": 9.70652110871909e-07,
+            "turns": "400-599"
+          },
+          {
+            "actual_builds": 0,
+            "legal_opportunity_player_steps": 121966,
+            "mean_aggregate_build_probability": 1.2761945478808615e-06,
+            "turns": "600-799"
+          },
+          {
+            "actual_builds": 0,
+            "legal_opportunity_player_steps": 47978,
+            "mean_aggregate_build_probability": 1.3210572930651293e-06,
+            "turns": "800-999"
+          },
+          {
+            "actual_builds": 0,
+            "legal_opportunity_player_steps": 14894,
+            "mean_aggregate_build_probability": 1.4389681637215104e-06,
+            "turns": "1000-1199"
+          }
+        ],
+        "expected_build_actions_from_probability_mass": 0.5691385865211487,
+        "mean_aggregate_build_probability": 1.0437337323310203e-06,
+        "mean_army_on_strongest_affordable_site": 58.7076936901581,
+        "mean_best_build_logit_margin_vs_best_nonbuild": -19.00383186340332,
+        "mean_best_build_rank": 341.3384871563991,
+        "mean_best_individual_build_probability": 1.0161637646888266e-06,
+        "mean_legal_build_sites": 1.059294945267756,
+        "per_player_game_best_logit_margin": {
+          "max": -2.90625,
+          "median": -11.578125,
+          "p90": -8.428125381469727,
+          "p99": -5.995625019073486
+        },
+        "per_player_game_best_rank": {
+          "best": 2,
+          "median": 21.0,
+          "p1": 4.0,
+          "p10": 6.0
+        },
+        "per_player_game_max_aggregate_build_probability": {
+          "max": 0.02302469126880169,
+          "median": 3.7205757053015986e-06,
+          "p90": 5.345933823264204e-05,
+          "p99": 0.0006443628808483481
+        }
+      },
+      "mean_game_length": 576.95263671875,
+      "opportunity_player_games_that_built": 0,
+      "player_game_build_rate": 0.0,
+      "player_games": 4096,
+      "player_games_with_build": 0,
+      "player_games_with_legal_build_opportunity": 3945,
+      "seat_0_build_actions": 0,
+      "seat_0_games_with_build": 0,
+      "seat_1_build_actions": 0,
+      "seat_1_games_with_build": 0,
+      "total_build_actions": 0,
+      "total_confirmed_new_castles": 0,
+      "total_legal_build_opportunity_player_steps": 545291
+    }
+  },
+  "sampling": "categorical (same network call as training rollout)",
+  "seed": 20260804
+}
