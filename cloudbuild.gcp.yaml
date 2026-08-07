@@ -10,7 +10,7 @@ steps:
 images:
   - "us-central1-docker.pkg.dev/$PROJECT_ID/generals-training/castle-trainer:${_IMAGE_TAG}"
 options:
-  machineType: "E2_HIGHCPU_32"
+  machineType: "E2_MEDIUM"
   diskSizeGb: 100
 substitutions:
   _IMAGE_TAG: "latest"
