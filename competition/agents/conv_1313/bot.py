@@ -226,7 +226,17 @@ def _policy_logits(parameters, observation, temporal_history, legal_mask):
     ).astype(jnp.float32)
     spatial_logits = patch_logits.reshape(7, 7, 9, 3, 3).transpose(2, 0, 3, 1, 4).reshape(-1)
     pass_logit = _linear(tokens[0], parameters["pass_head.weight"], parameters["pass_head.bias"]).astype(jnp.float32)
-    return jnp.where(legal_mask, jnp.concatenate((spatial_logits, pass_logit)), -1e9)
+    logits = jnp.concatenate((spatial_logits, pass_logit))
+    if "build_kind_head.weight" in parameters:
+        build_kind_residual = _linear(
+            tokens[0],
+            parameters["build_kind_head.weight"],
+            parameters["build_kind_head.bias"],
+        ).astype(jnp.float32).reshape(())
+        logits = logits.at[8 * CELL_COUNT : 9 * CELL_COUNT].add(
+            build_kind_residual
+        )
+    return jnp.where(legal_mask, logits, -1e9)
 
 
 def _policy_action(parameters, observation, temporal_history, legal_mask):

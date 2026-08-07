@@ -10,7 +10,8 @@ from .actions import decode_action
 from .model import (
     CompetitionTransformer,
     _embed_spatial_tokens,
-    _forward_transformer,
+    _transformer_heads,
+    _transformer_tokens,
     _to_bfloat16,
 )
 from .observation import COMPETITION_OBSERVATION_SCHEMA
@@ -114,6 +115,11 @@ class ConvCompetitionTransformer(eqx.Module):
 
     transformer: CompetitionTransformer
     conv_patch_residual: ConvPatchResidual
+    # Training-only. None preserves the historical checkpoint leaf schema.
+    build_difference_head: eqx.nn.Linear | None
+    # Deployment-visible scalar added to every build logit. Zero initialization
+    # reproduces the historical flat policy exactly.
+    build_kind_head: eqx.nn.Linear | None
 
     def __init__(
         self,
@@ -133,6 +139,8 @@ class ConvCompetitionTransformer(eqx.Module):
         observation_schema: str = COMPETITION_OBSERVATION_SCHEMA,
         conv_channels: int = 96,
         conv_groups: int = 12,
+        with_build_difference_head: bool = False,
+        with_build_kind_head: bool = False,
         key,
     ):
         if observation_schema != COMPETITION_OBSERVATION_SCHEMA:
@@ -166,6 +174,32 @@ class ConvCompetitionTransformer(eqx.Module):
             patch_size=patch_size,
             key=conv_key,
         )
+        if with_build_difference_head:
+            head = eqx.nn.Linear(
+                model_dim,
+                patch_size * patch_size,
+                key=jax.random.fold_in(key, 0xCA571E),
+            )
+            self.build_difference_head = eqx.tree_at(
+                lambda linear: (linear.weight, linear.bias),
+                head,
+                (jnp.zeros_like(head.weight), jnp.zeros_like(head.bias)),
+            )
+        else:
+            self.build_difference_head = None
+        if with_build_kind_head:
+            head = eqx.nn.Linear(
+                model_dim,
+                1,
+                key=jax.random.fold_in(key, 0xB017D),
+            )
+            self.build_kind_head = eqx.tree_at(
+                lambda linear: (linear.weight, linear.bias),
+                head,
+                (jnp.zeros_like(head.weight), jnp.zeros_like(head.bias)),
+            )
+        else:
+            self.build_kind_head = None
 
     @property
     def observation_schema(self):
@@ -185,13 +219,78 @@ class ConvCompetitionTransformer(eqx.Module):
         return patch_tokens.astype(jnp.float32), correction.astype(jnp.float32)
 
     def forward(self, observation, temporal_history, legal_mask):
-        return _forward_transformer(
+        net, tokens = _transformer_tokens(
             self.transformer,
             observation,
             temporal_history,
-            legal_mask,
             self.conv_patch_residual,
         )
+        logits, value, value_logits, _ = self._actor_critic_heads(
+            net, tokens, legal_mask
+        )
+        return logits, value, value_logits
+
+    def _actor_critic_heads(self, net, tokens, legal_mask):
+        logits, value, value_logits = _transformer_heads(
+            self.transformer, net, tokens, legal_mask
+        )
+        build_kind_residual = jnp.asarray(0.0, dtype=jnp.float32)
+        if self.build_kind_head is not None:
+            head = (
+                _to_bfloat16(self.build_kind_head)
+                if self.transformer.use_bf16
+                else self.build_kind_head
+            )
+            build_kind_residual = head(tokens[0]).astype(jnp.float32).reshape(())
+            build_start = 8 * self.transformer.board_size**2
+            build_stop = 9 * self.transformer.board_size**2
+            logits = logits.at[build_start:build_stop].add(build_kind_residual)
+        return logits, value, value_logits, build_kind_residual
+
+    def build_difference(self, observation, temporal_history, legal_mask):
+        """Predict build-vs-control return difference for each board cell."""
+        return self.forward_with_build_difference(
+            observation, temporal_history, legal_mask
+        )[3]
+
+    def forward_with_build_difference(
+        self, observation, temporal_history, legal_mask
+    ):
+        """Run actor, critic, and training-only spatial head in one trunk pass."""
+        if self.build_difference_head is None:
+            raise ValueError("This network has no build-difference auxiliary head")
+        net, tokens = _transformer_tokens(
+            self.transformer,
+            observation,
+            temporal_history,
+            self.conv_patch_residual,
+        )
+        head = (
+            _to_bfloat16(self.build_difference_head)
+            if self.transformer.use_bf16
+            else self.build_difference_head
+        )
+        patch_grid = self.transformer.board_size // self.transformer.patch_size
+        values = jax.vmap(head)(tokens[3:]).astype(jnp.float32)
+        values = values.reshape(
+            patch_grid,
+            patch_grid,
+            self.transformer.patch_size,
+            self.transformer.patch_size,
+        )
+        values = values.transpose(0, 2, 1, 3).reshape(
+            self.transformer.board_size,
+            self.transformer.board_size,
+        )
+        build_start = 8 * self.transformer.board_size * self.transformer.board_size
+        legal_builds = legal_mask[
+            build_start : build_start + self.transformer.board_size**2
+        ].reshape(self.transformer.board_size, self.transformer.board_size)
+        build_difference = jnp.where(legal_builds, values, jnp.nan)
+        logits, value, value_logits, build_kind_residual = self._actor_critic_heads(
+            net, tokens, legal_mask
+        )
+        return logits, value, value_logits, build_difference, build_kind_residual
 
     def __call__(
         self,

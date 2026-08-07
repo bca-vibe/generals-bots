@@ -43,18 +43,21 @@ def _participants(
 ) -> list[Participant]:
     control = TrainingConfig.from_toml(control_config_path)
     treatment = TrainingConfig.from_toml(treatment_config_path)
+    if control.parent_final_iteration != treatment.parent_final_iteration:
+        raise ValueError("A/B configs disagree on the parent iteration")
+    parent_iteration = control.parent_final_iteration
     participants = [
         Participant(
-            "parent_003003",
+            f"parent_{parent_iteration:06d}",
             "parent",
-            3003,
+            parent_iteration,
             control_config_path,
             parent_checkpoint,
         )
     ]
     for arm, config_path, config in (
-        ("control_lambda097", control_config_path, control),
-        ("treatment_phi_boost", treatment_config_path, treatment),
+        ("control", control_config_path, control),
+        ("treatment", treatment_config_path, treatment),
     ):
         for iteration in iterations:
             checkpoint = (
@@ -87,13 +90,13 @@ def run(args: argparse.Namespace) -> dict:
     base = TrainingConfig.from_toml(args.control_config)
     tracker_config = replace(
         base,
-        run_name="castle_ab_lambda097_checkpoint_round_robin_20260804",
-        wandb_run_id="castle-ab-lambda097-checkpoint-round-robin-20260804",
-        wandb_run_name="Castle A/B · all-checkpoint round robin · λ=0.97",
+        run_name=f"{base.run_name}_checkpoint_round_robin",
+        wandb_run_id=f"{base.wandb_run_id}-checkpoint-round-robin",
+        wandb_run_name="Castle counterfactual A/B · checkpoint round robin",
         wandb_job_type="evaluation-round-robin",
         wandb_tags=(
             "castle-ab",
-            "lambda097",
+            "counterfactual-ppo",
             "checkpoint-round-robin",
             "raw-and-ema",
         ),

@@ -76,6 +76,8 @@ def _extract_weights(ema) -> dict:
     _add_norm(weights, "output_norm", transformer.output_norm)
     _add_linear(weights, "spatial_policy_head", transformer.spatial_policy_head)
     _add_linear(weights, "pass_head", transformer.pass_head)
+    if ema.build_kind_head is not None:
+        _add_linear(weights, "build_kind_head", ema.build_kind_head)
     for name in (
         "input_norm",
         "residual_norm_1",

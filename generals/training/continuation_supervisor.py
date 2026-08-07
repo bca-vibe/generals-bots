@@ -51,7 +51,11 @@ def _hardlink_or_copy(source: Path, destination: Path) -> None:
 
 
 def _prepare_publication(
-    request: dict, config_path: Path, run_dir: Path, hf_root: str
+    request: dict,
+    config_path: Path,
+    run_dir: Path,
+    hf_root: str,
+    config: TrainingConfig,
 ) -> dict:
     iteration = int(request["iteration"])
     checkpoint = Path(request["checkpoint_path"])
@@ -71,6 +75,38 @@ def _prepare_publication(
     temporary.mkdir(parents=True)
     full_destination = temporary / "training_checkpoint.eqx"
     _hardlink_or_copy(checkpoint, full_destination)
+    counterfactual_files = []
+    if config.counterfactual_castle_training:
+        schema_path = run_dir / "checkpoint_schema.json"
+        sidecar_path = run_dir / f"checkpoint_{iteration:06d}.counterfactual.json"
+        if not sidecar_path.is_file() and checkpoint.name == "terminal.eqx":
+            sidecar_path = run_dir / "terminal.counterfactual.json"
+        if not schema_path.is_file() or not sidecar_path.is_file():
+            raise FileNotFoundError(
+                f"Missing counterfactual checkpoint metadata at iteration {iteration}"
+            )
+        shutil.copy2(schema_path, temporary / schema_path.name)
+        shutil.copy2(sidecar_path, temporary / sidecar_path.name)
+        eligible_shards = []
+        for shard in sorted((run_dir / "counterfactual_buffer").glob("refresh_*.npz")):
+            shard_iteration = int(shard.stem.rsplit("_", 1)[1])
+            if (
+                iteration - config.counterfactual_max_age_iterations
+                <= shard_iteration
+                <= iteration
+            ):
+                eligible_shards.append(shard)
+        if eligible_shards:
+            buffer_destination = temporary / "counterfactual_buffer"
+            buffer_destination.mkdir()
+            for shard in eligible_shards:
+                _hardlink_or_copy(shard, buffer_destination / shard.name)
+                counterfactual_files.append(
+                    str(Path("counterfactual_buffer") / shard.name)
+                )
+            manifest_path = run_dir / "counterfactual_buffer" / "manifest.json"
+            if manifest_path.is_file():
+                shutil.copy2(manifest_path, buffer_destination / "manifest.json")
     source = f"{hf_root}/checkpoints/iteration_{iteration:06d}/training_checkpoint.eqx"
     environment = os.environ.copy()
     environment.update(
@@ -141,6 +177,8 @@ def _prepare_publication(
         "remote_raw_competition_path": (
             f"{hf_root}/checkpoints/iteration_{iteration:06d}/competition_raw.zip"
         ),
+        "counterfactual_state_present": config.counterfactual_castle_training,
+        "counterfactual_files": counterfactual_files,
     }
     _write_json_atomic(temporary / "manifest.json", record)
     if final_dir.exists():
@@ -180,7 +218,16 @@ def main() -> None:
         "--duration-hours",
         str(args.duration_hours),
     ]
-    child = subprocess.Popen(command)
+    child_environment = os.environ.copy()
+    train_devices = child_environment.pop("TRAIN_CUDA_VISIBLE_DEVICES", None)
+    train_expected_devices = child_environment.pop(
+        "TRAIN_EXPECTED_JAX_DEVICE_COUNT", None
+    )
+    if train_devices is not None:
+        child_environment["CUDA_VISIBLE_DEVICES"] = train_devices
+    if train_expected_devices is not None:
+        child_environment["EXPECTED_JAX_DEVICE_COUNT"] = train_expected_devices
+    child = subprocess.Popen(command, env=child_environment)
     attempted: set[tuple[int, str]] = set()
 
     def forward(signum, _frame):
@@ -203,7 +250,7 @@ def main() -> None:
                 started = time.perf_counter()
                 try:
                     record = _prepare_publication(
-                        request, config_path, run_dir, args.hf_root
+                        request, config_path, run_dir, args.hf_root, config
                     )
                     record["bundle_prepare_seconds"] = time.perf_counter() - started
                     _append_status(status_path, record)

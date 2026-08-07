@@ -280,7 +280,9 @@ def analyze(atlas_path: Path, selfplay_path: Path, seed: int):
                 ),
             },
         },
-        "selfplay_game_length": selfplay["policies"]["ema"]["game_length"],
+        "selfplay_game_length": selfplay["policies"].get(
+            "raw", selfplay["policies"].get("ema")
+        )["game_length"],
     }
 
 

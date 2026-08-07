@@ -90,6 +90,7 @@ def run_branch(
         config_path,
         preflight.run_dir,
         f"bca-vibe/generals-bot@main:runs/castle_ab_preflight/{arm}",
+        preflight,
     )
     result = {
         "arm": arm,

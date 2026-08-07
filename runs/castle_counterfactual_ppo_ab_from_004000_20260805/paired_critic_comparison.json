@@ -1,0 +1,22 @@
+{
+  "common_source_states": 2016,
+  "same_build_action_fraction": 0.9657738095238095,
+  "same_control_action_fraction": 0.7108134920634921,
+  "same_build_and_control_action_fraction": 0.6919642857142857,
+  "valid_exact_action_states": 1368,
+  "exact_action_subset": {
+    "control_mean_build_minus_control_value": -0.4352916262482908,
+    "treatment_mean_build_minus_control_value": -0.3713317525144857,
+    "paired_treatment_minus_control_shift": 0.06395987373380513,
+    "fraction_of_state_shifts_positive": 0.5614035087719298,
+    "source_game_clustered_bootstrap_95": [
+      0.04630157,
+      0.08125589
+    ]
+  },
+  "notes": [
+    "States, actor seats, source batches, source slots, and turn bins align exactly between atlases.",
+    "This subset compares the two critics where both arms selected exactly the same build and non-build intervention actions.",
+    "The primary atlas is otherwise a matched-policy analysis because each arm selects its own actions and continues under its own policy."
+  ]
+}

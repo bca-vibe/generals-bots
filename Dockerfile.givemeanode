@@ -1,20 +1,36 @@
 FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
 
+ARG UV_VERSION=0.11.15
+ARG PYTHON_VERSION=3.11.15
+ARG JAX_VERSION=0.10.2
+
+COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PATH=/opt/venv/bin:$PATH
+    PATH=/opt/venv/bin:$PATH \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_CACHE_DIR=/var/cache/uv
 
 RUN apt-get -o APT::Sandbox::User=root update \
-    && apt-get -o APT::Sandbox::User=root install -y --no-install-recommends python3 python3-venv python3-pip ca-certificates curl git \
-    && rm -rf /var/lib/apt/lists/* \
-    && python3 -m venv /opt/venv
+    && apt-get -o APT::Sandbox::User=root install -y --no-install-recommends ca-certificates curl git \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
-COPY . /workspace
+COPY pyproject.toml uv.lock README.md /workspace/
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e '.[train,tracking]' \
-    && pip install --no-cache-dir --upgrade 'jax[cuda12]'
+# Pin Python and the complete dependency lock. The base image already contains
+# CUDA, cuDNN, and NCCL, so cuda12-local avoids a redundant multi-gigabyte CUDA
+# download while retaining the exact JAX plugin/PJRT versions.
+RUN uv python install ${PYTHON_VERSION} \
+    && uv venv --python ${PYTHON_VERSION} /opt/venv \
+    && uv sync --locked --no-install-project --extra train --extra tracking --python /opt/venv/bin/python \
+    && uv pip install --python /opt/venv/bin/python "jax[cuda12-local]==${JAX_VERSION}" \
+    && rm -rf /var/cache/uv
+
+COPY . /workspace
+RUN uv pip install --python /opt/venv/bin/python --no-deps -e . \
+    && python tools/verify_training_runtime.py --python 3.11 --jax ${JAX_VERSION} --jaxlib ${JAX_VERSION}
 
 # Execute the CPU-only supervisor as a file. ``python -m`` imports
 # ``generals.training`` first, whose public API imports JAX and causes the

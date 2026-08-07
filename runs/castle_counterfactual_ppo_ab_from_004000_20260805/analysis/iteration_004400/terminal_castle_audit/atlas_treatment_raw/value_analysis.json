@@ -1,0 +1,142 @@
+{
+  "causal_groups": {
+    "good_minus_bad_cluster_bootstrap_95": [
+      0.4611506419569005,
+      0.538154635023298
+    ],
+    "good_minus_bad_successor_value_delta": 0.49927416646961503,
+    "negative_both_halves": {
+      "build_successor_minus_pre_value": -0.7406414788671281,
+      "causal_score_delta": -0.4841312056737589,
+      "fraction_build_successor_above_pre_value": 0.03546099290780142,
+      "fraction_successor_value_delta_positive": 0.03546099290780142,
+      "name": "negative causal estimate in both rollout halves",
+      "states": 705,
+      "successor_value_delta_build_minus_control": -0.7452825918094773,
+      "successor_value_delta_cluster_bootstrap_95": [
+        -0.7789325227502847,
+        -0.7119455701535434
+      ],
+      "successor_value_delta_median": -0.7680819369852543
+    },
+    "negative_full_sample": {
+      "build_successor_minus_pre_value": -0.6001270793116243,
+      "causal_score_delta": -0.3682990981963928,
+      "fraction_build_successor_above_pre_value": 0.06412825651302605,
+      "fraction_successor_value_delta_positive": 0.07014028056112225,
+      "name": "negative full-sample causal estimate",
+      "states": 998,
+      "successor_value_delta_build_minus_control": -0.6021146464246087,
+      "successor_value_delta_cluster_bootstrap_95": [
+        -0.6327431193099455,
+        -0.5710497321377176
+      ],
+      "successor_value_delta_median": -0.6084618549793959
+    },
+    "positive_both_halves": {
+      "build_successor_minus_pre_value": -0.12408703237322274,
+      "causal_score_delta": 0.22709760273972604,
+      "fraction_build_successor_above_pre_value": 0.2602739726027397,
+      "fraction_successor_value_delta_positive": 0.2945205479452055,
+      "name": "positive causal estimate in both rollout halves",
+      "states": 146,
+      "successor_value_delta_build_minus_control": -0.11701802691892874,
+      "successor_value_delta_cluster_bootstrap_95": [
+        -0.1607847672943734,
+        -0.07514220748016097
+      ],
+      "successor_value_delta_median": -0.06309777498245239
+    },
+    "positive_full_sample": {
+      "build_successor_minus_pre_value": -0.10352110748612334,
+      "causal_score_delta": 0.1291348600508906,
+      "fraction_build_successor_above_pre_value": 0.25190839694656486,
+      "fraction_successor_value_delta_positive": 0.26463104325699743,
+      "name": "positive full-sample causal estimate",
+      "states": 393,
+      "successor_value_delta_build_minus_control": -0.10284047995499364,
+      "successor_value_delta_cluster_bootstrap_95": [
+        -0.1278268572893246,
+        -0.07914502646328661
+      ],
+      "successor_value_delta_median": -0.05165069364011288
+    }
+  },
+  "checkpoint_iteration": 4400,
+  "checkpoint_sha256": "a632333d485ec4ada92b22f0aa2c71b74f1e838eaec3bc1fc51946ff5e0559c4",
+  "data_integrity": {
+    "branch_rollouts": 64512,
+    "intervention_pairs_terminal_immediately": 496,
+    "paired_repetitions_per_state": 16,
+    "source_games_represented": 786,
+    "states": 2016,
+    "states_excluded_from_successor_value_analysis": 31
+  },
+  "heldout_good_definition": {
+    "fraction_heldout_successor_value_delta_positive": 0.2651162790697674,
+    "heldout_causal_score_delta": 0.0498062015503876,
+    "heldout_successor_value_delta": -0.12839164704088007,
+    "heldout_successor_value_delta_cluster_bootstrap_95": [
+      -0.15419831055345806,
+      -0.1040048240291686
+    ],
+    "selection": "classify a state as good on one 8-rollout half and evaluate value and causal effect on the other half, then swap",
+    "state_half_selections": 645
+  },
+  "overall": {
+    "build_successor_minus_pre_value": -0.34822508902708305,
+    "causal_score_delta": -0.15966021825396826,
+    "control_successor_minus_pre_value": -0.0010337986276656276,
+    "fraction_build_successor_above_pre_value": 0.13299748110831233,
+    "fraction_successor_value_delta_positive": 0.14005037783375315,
+    "pre_actor_value_mean": -0.00030249886658108353,
+    "successor_value_delta_build_minus_control": -0.34719129039941743,
+    "successor_value_delta_cluster_bootstrap_95": [
+      -0.37023085447138365,
+      -0.32534545556805106
+    ]
+  },
+  "ranking_signal": {
+    "first_half_value_vs_second_half_causal": {
+      "pearson": 0.698453482868561,
+      "spearman": 0.596012427205315,
+      "states": 1985
+    },
+    "full_state_value_delta_vs_causal_delta": {
+      "pearson": 0.7359426033160248,
+      "spearman": 0.6319888874941383,
+      "states": 1985
+    },
+    "least_bad_value_decile": {
+      "causal_score_delta": 0.024936868686868688,
+      "fraction_causally_positive": 0.4494949494949495,
+      "states": 198,
+      "value_delta": 0.11156474578595894
+    },
+    "second_half_value_vs_first_half_causal": {
+      "pearson": 0.6940448831217201,
+      "spearman": 0.60370992613645,
+      "states": 1985
+    },
+    "worst_value_decile": {
+      "causal_score_delta": -0.6661931818181818,
+      "fraction_causally_positive": 0.005050505050505051,
+      "states": 198,
+      "value_delta": -1.285390568763074
+    }
+  },
+  "selfplay_game_length": {
+    "decisive_games": 4080,
+    "decisive_mean": 480.11446078431374,
+    "decisive_median": 450.0,
+    "mean": 482.926513671875,
+    "median": 450.0,
+    "p10": 190.0,
+    "p25": 290.0,
+    "p75": 648.0,
+    "p90": 812.0,
+    "truncated_at_1200": 16,
+    "truncation_rate": 0.00390625
+  },
+  "value_scale": "network expectation on [-1, 1]"
+}

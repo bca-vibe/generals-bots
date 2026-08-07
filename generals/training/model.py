@@ -224,6 +224,52 @@ def _forward_transformer(
     patch_residual=None,
 ):
     """Run the shared transformer, optionally adding a spatial-token correction."""
+    net, tokens = _transformer_tokens(
+        transformer,
+        observation,
+        temporal_history,
+        patch_residual,
+    )
+    return _transformer_heads(transformer, net, tokens, legal_mask)
+
+
+def _transformer_heads(transformer, net, tokens, legal_mask):
+    """Apply the deployment actor and critic heads to final tokens."""
+
+    value_logits = net.value_head(tokens[0]).astype(jnp.float32)
+    bin_centers = jnp.linspace(
+        transformer.value_min, transformer.value_max, transformer.value_bins
+    )
+    value = jnp.sum(jax.nn.softmax(value_logits) * bin_centers)
+
+    patch_grid = transformer.board_size // transformer.patch_size
+    patch_logits = jax.vmap(net.spatial_policy_head)(tokens[3:]).astype(jnp.float32)
+    spatial_logits = patch_logits.reshape(
+        patch_grid,
+        patch_grid,
+        SPATIAL_PLANES,
+        transformer.patch_size,
+        transformer.patch_size,
+    )
+    spatial_logits = spatial_logits.transpose(2, 0, 3, 1, 4).reshape(-1)
+    pass_logit = net.pass_head(tokens[0]).astype(jnp.float32)
+    logits = jnp.concatenate([spatial_logits, pass_logit])
+    logits = jnp.where(legal_mask, logits, -1e9)
+    return logits, value, value_logits
+
+
+def _transformer_tokens(
+    transformer,
+    observation,
+    temporal_history,
+    patch_residual=None,
+):
+    """Return the compute-cast transformer and its final normalized tokens.
+
+    Keeping token production separate lets training-only auxiliary heads share
+    exactly the actor/critic representation without perturbing their forward
+    path.
+    """
     net, observation, patch_tokens = _embed_spatial_tokens(
         transformer, observation
     )
@@ -247,23 +293,4 @@ def _forward_transformer(
     for block in net.blocks:
         tokens = block(tokens)
     tokens = jax.vmap(net.output_norm)(tokens)
-
-    value_logits = net.value_head(tokens[0]).astype(jnp.float32)
-    bin_centers = jnp.linspace(
-        transformer.value_min, transformer.value_max, transformer.value_bins
-    )
-    value = jnp.sum(jax.nn.softmax(value_logits) * bin_centers)
-
-    patch_logits = jax.vmap(net.spatial_policy_head)(tokens[3:]).astype(jnp.float32)
-    spatial_logits = patch_logits.reshape(
-        patch_grid,
-        patch_grid,
-        SPATIAL_PLANES,
-        transformer.patch_size,
-        transformer.patch_size,
-    )
-    spatial_logits = spatial_logits.transpose(2, 0, 3, 1, 4).reshape(-1)
-    pass_logit = net.pass_head(tokens[0]).astype(jnp.float32)
-    logits = jnp.concatenate([spatial_logits, pass_logit])
-    logits = jnp.where(legal_mask, logits, -1e9)
-    return logits, value, value_logits
+    return net, tokens

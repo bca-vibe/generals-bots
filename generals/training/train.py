@@ -9,7 +9,7 @@ import os
 import shutil
 import signal
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from functools import partial
 from pathlib import Path
 
@@ -26,6 +26,10 @@ from generals.core.game import get_observation
 
 from .actions import CELL_COUNT, MOVE_PLANES, PASS_INDEX
 from .config import CurriculumStage, TrainingConfig
+from .counterfactual import (
+    CastleCounterfactualBuffer,
+    generate_counterfactual_refresh,
+)
 from .conv_model import ConvCompetitionTransformer, calibrate_conv_token_rms
 from .evaluation import (
     evaluate_paired_networks,
@@ -35,7 +39,7 @@ from .evaluation import (
 from .league import aggregate_league_results, make_opponent_policy
 from .model import CompetitionTransformer
 from .observation import augment_observation, init_observation_memory
-from .ppo import compute_gae, ppo_epoch
+from .ppo import compute_gae, counterfactual_ppo_epoch, ppo_epoch
 from .rollout import collect_self_play_rollout
 from .tracking import WandbTracker
 
@@ -93,6 +97,8 @@ def build_network(
             **common,
             conv_channels=config.conv_channels,
             conv_groups=config.conv_groups,
+            with_build_difference_head=config.counterfactual_castle_training,
+            with_build_kind_head=config.residual_build_kind_head,
         )
     raise ValueError(f"Unsupported model_architecture {config.model_architecture!r}")
 
@@ -254,6 +260,17 @@ def _castle_intervention_strength(
     return (anneal_until - iteration_number) / (anneal_until - full_until)
 
 
+def _linear_anneal_multiplier(iteration_number: int, start: int, end: int) -> float:
+    """One through ``start``, linear to zero at ``end``; 0/0 means constant one."""
+    if start == 0 and end == 0:
+        return 1.0
+    if iteration_number <= start:
+        return 1.0
+    if iteration_number >= end:
+        return 0.0
+    return (end - iteration_number) / (end - start)
+
+
 def _write_metrics(path: Path, metrics: dict) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(metrics, sort_keys=True) + "\n")
@@ -266,6 +283,34 @@ def _write_json_atomic(path: Path, value: dict) -> None:
         json.dumps(value, indent=2, sort_keys=True), encoding="utf-8"
     )
     os.replace(temporary, path)
+
+
+def _write_learned_league_manifest(
+    run_dir: Path, members: dict[str, list[dict]]
+) -> None:
+    _write_json_atomic(
+        run_dir / "learned_league_manifest.json",
+        {
+            "schema": "separate_raw_ema_growing_checkpoint_league_members",
+            "policies": {
+                policy_name: [
+                    {
+                        "name": member["name"],
+                        "iteration": member["iteration"],
+                        "sha256": member["sha256"],
+                    }
+                    for member in policy_members
+                ]
+                for policy_name, policy_members in members.items()
+            },
+        },
+    )
+
+
+def _latest_counterfactual_generator_iteration(buffer) -> int | None:
+    if buffer is None or buffer.data is None or buffer.size == 0:
+        return None
+    return int(buffer.data["generator_iteration"].max())
 
 
 def _request_checkpoint_publication(run_dir: Path, metadata: dict) -> dict:
@@ -449,6 +494,58 @@ def _load_checkpoint_state(path, skeleton, config: TrainingConfig):
             "Use the checkpoint's original run config; legacy checkpoints require "
             "legacy_38 with the transformer architecture."
         ) from error
+
+
+def _attach_zero_build_difference_head(legacy, initialized):
+    """Copy a historical conv actor/critic into a castle-head skeleton."""
+    if not isinstance(legacy, ConvCompetitionTransformer):
+        raise TypeError("Castle counterfactual migration requires a conv checkpoint")
+    if (
+        initialized.build_difference_head is None
+        and initialized.build_kind_head is None
+    ):
+        raise ValueError("Migration skeleton has no new castle head")
+    return eqx.tree_at(
+        lambda network: (network.transformer, network.conv_patch_residual),
+        initialized,
+        (legacy.transformer, legacy.conv_patch_residual),
+    )
+
+
+def _migrate_optimizer_state_with_zero_head(old_state, new_state):
+    """Preserve Adam moments/counts while adding zero moments for the new head."""
+    def unpack(state):
+        # Depending on the Optax version, the transforms composing adam() are
+        # either flattened into the outer chain or retained as a nested pair.
+        if len(state) == 3 and hasattr(state[1], "mu"):
+            return state[1], state[2], False
+        if (
+            len(state) == 2
+            and isinstance(state[1], tuple)
+            and len(state[1]) == 2
+            and hasattr(state[1][0], "mu")
+        ):
+            return state[1][0], state[1][1], True
+        raise ValueError(
+            "Unexpected optimizer chain while migrating castle head: "
+            f"{jax.tree.structure(state)}"
+        )
+
+    old_adam, old_schedule, old_nested = unpack(old_state)
+    new_adam, new_schedule, new_nested = unpack(new_state)
+    if old_nested != new_nested:
+        raise ValueError("Optimizer-state layouts differ during castle-head migration")
+    migrated_mu = _attach_zero_build_difference_head(old_adam.mu, new_adam.mu)
+    migrated_nu = _attach_zero_build_difference_head(old_adam.nu, new_adam.nu)
+    migrated_adam = new_adam._replace(
+        count=old_adam.count,
+        mu=migrated_mu,
+        nu=migrated_nu,
+    )
+    migrated_schedule = new_schedule._replace(count=old_schedule.count)
+    if new_nested:
+        return (new_state[0], (migrated_adam, migrated_schedule))
+    return (new_state[0], migrated_adam, migrated_schedule)
 
 
 def _make_evaluator(config: TrainingConfig, environment, n_maps: int, truncation: int):
@@ -692,26 +789,28 @@ def _run_league(
                 f"score={result['score']:.3f}"
             )
 
-        aggregate = aggregate_league_results(results)
-        behavior_totals: dict[str, float] = {}
-        for result in results.values():
-            for name, value in result.items():
-                if name.startswith("behavior_"):
-                    behavior_totals[name] = behavior_totals.get(name, 0.0) + value
-        aggregate.update(behavior_totals)
-        aggregate.update(_behavior_rates(behavior_totals, "behavior_"))
-        aggregate["evaluation_seconds"] = sum(
-            result["evaluation_seconds"] for result in results.values()
-        )
-        aggregate_record = {
-            "iteration": iteration,
-            **{
-                f"league/{policy_name}/aggregate/{name}": value
-                for name, value in aggregate.items()
-            },
-        }
-        _write_metrics(run_dir / "metrics.jsonl", aggregate_record)
-        tracker.log_evaluation(aggregate_record)
+        aggregate = None
+        if results:
+            aggregate = aggregate_league_results(results)
+            behavior_totals: dict[str, float] = {}
+            for result in results.values():
+                for name, value in result.items():
+                    if name.startswith("behavior_"):
+                        behavior_totals[name] = behavior_totals.get(name, 0.0) + value
+            aggregate.update(behavior_totals)
+            aggregate.update(_behavior_rates(behavior_totals, "behavior_"))
+            aggregate["evaluation_seconds"] = sum(
+                result["evaluation_seconds"] for result in results.values()
+            )
+            aggregate_record = {
+                "iteration": iteration,
+                **{
+                    f"league/{policy_name}/aggregate/{name}": value
+                    for name, value in aggregate.items()
+                },
+            }
+            _write_metrics(run_dir / "metrics.jsonl", aggregate_record)
+            tracker.log_evaluation(aggregate_record)
         checkpoint_result = None
         seven_opponent_macro_score = None
         if checkpoint_opponent is not None:
@@ -782,11 +881,12 @@ def _run_league(
             "fixed_checkpoint": checkpoint_result,
             "seven_opponent_macro_score": seven_opponent_macro_score,
         }
-        print(
-            f"  league {policy_name}/aggregate: {int(aggregate['wins'])}W/"
-            f"{int(aggregate['losses'])}L/{int(aggregate['draws'])}D, "
-            f"score={aggregate['score']:.3f}, macro={aggregate['macro_score']:.3f}"
-        )
+        if aggregate is not None:
+            print(
+                f"  league {policy_name}/aggregate: {int(aggregate['wins'])}W/"
+                f"{int(aggregate['losses'])}L/{int(aggregate['draws'])}D, "
+                f"score={aggregate['score']:.3f}, macro={aggregate['macro_score']:.3f}"
+            )
 
     payload = {
         "iteration": iteration,
@@ -800,6 +900,153 @@ def _run_league(
     result_path = run_dir / f"league_{label}.json"
     result_path.write_text(
         json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return payload
+
+
+def _evaluate_network_pair(
+    config: TrainingConfig,
+    network_a,
+    network_b,
+    *,
+    n_maps: int,
+    seed: int,
+) -> dict[str, float]:
+    """Greedy paired-seat evaluation of two learned policies on locked maps."""
+    device_count = jax.device_count()
+    if n_maps % device_count:
+        raise ValueError(
+            f"learned league maps ({n_maps}) must be divisible by {device_count} devices"
+        )
+    stage = config.curriculum[-1]
+    environment = make_environment(config, stage, pool_size=max(n_maps, 16))
+    pool_replicated = _reset_replicated_pool(environment, jax.random.PRNGKey(seed))
+    sharded_pool = _shard_replicated_league_pool(
+        pool_replicated, n_maps, device_count
+    )
+    maps_per_device = n_maps // device_count
+
+    def evaluate_shard(pool_shard, current, frozen):
+        return evaluate_paired_networks(
+            environment,
+            pool_shard,
+            current,
+            frozen,
+            maps_per_device,
+            config.truncation,
+            schema_a=config.observation_schema,
+            schema_b=config.observation_schema,
+            pad_to=config.pad_to,
+            history_size=config.history_size,
+            temporal_window=config.temporal_window,
+        )
+
+    evaluator = jax.pmap(evaluate_shard, in_axes=(0, None, None))
+    metrics = evaluator(
+        sharded_pool,
+        jax.device_get(network_a),
+        jax.device_get(network_b),
+    )
+    return _combine_sharded_evaluation(jax.device_get(metrics))
+
+
+def _run_learned_checkpoint_league(
+    config: TrainingConfig,
+    current_policies: dict[str, object],
+    members: dict[str, list[dict]],
+    tracker: WandbTracker,
+    run_dir: Path,
+    iteration: int,
+) -> dict:
+    """Evaluate raw and EMA only against the corresponding frozen snapshots."""
+    started = time.perf_counter()
+    device_count = jax.device_count()
+    if config.learned_league_maps % device_count:
+        raise ValueError(
+            "learned_league_maps must be divisible by the JAX device count"
+        )
+    stage = config.curriculum[-1]
+    environment = make_environment(
+        config, stage, pool_size=max(config.learned_league_maps, 16)
+    )
+    pool_replicated = _reset_replicated_pool(
+        environment, jax.random.PRNGKey(config.learned_league_seed)
+    )
+    sharded_pool = _shard_replicated_league_pool(
+        pool_replicated, config.learned_league_maps, device_count
+    )
+    maps_per_device = config.learned_league_maps // device_count
+
+    def evaluate_shard(pool_shard, current, frozen):
+        return evaluate_paired_networks(
+            environment,
+            pool_shard,
+            current,
+            frozen,
+            maps_per_device,
+            config.truncation,
+            schema_a=config.observation_schema,
+            schema_b=config.observation_schema,
+            pad_to=config.pad_to,
+            history_size=config.history_size,
+            temporal_window=config.temporal_window,
+        )
+
+    evaluator = jax.pmap(evaluate_shard, in_axes=(0, None, None))
+    payload: dict[str, object] = {
+        "schema": "separate_raw_ema_growing_checkpoint_league",
+        "iteration": iteration,
+        "seed": config.learned_league_seed,
+        "maps_per_matchup": config.learned_league_maps,
+        "games_per_matchup": 2 * config.learned_league_maps,
+        "policies": {},
+    }
+    for policy_index, policy_name in enumerate(("raw", "ema")):
+        current = current_policies[policy_name]
+        policy_results: dict[str, dict[str, float]] = {}
+        for opponent_index, member in enumerate(members[policy_name]):
+            matchup_started = time.perf_counter()
+            # Identical boards for every matchup and both policy families.
+            metrics = evaluator(
+                sharded_pool,
+                jax.device_get(current),
+                jax.device_get(member["network"]),
+            )
+            result = _combine_sharded_evaluation(jax.device_get(metrics))
+            result["evaluation_seconds"] = time.perf_counter() - matchup_started
+            policy_results[member["name"]] = result
+            record = {
+                "iteration": iteration,
+                **{
+                    f"learned_league/{policy_name}/{member['name']}/{name}": value
+                    for name, value in result.items()
+                },
+            }
+            _write_metrics(run_dir / "metrics.jsonl", record)
+            tracker.log_evaluation(record)
+            print(
+                f"  learned league {policy_name}/{member['name']}: "
+                f"{int(result['wins'])}W/{int(result['losses'])}L/"
+                f"{int(result['draws'])}D, score={result['score']:.3f}"
+            )
+        macro_score = float(
+            np.mean([result["score"] for result in policy_results.values()])
+        )
+        aggregate_record = {
+            "iteration": iteration,
+            f"learned_league/{policy_name}/aggregate/macro_score": macro_score,
+            f"learned_league/{policy_name}/aggregate/opponents": len(policy_results),
+        }
+        _write_metrics(run_dir / "metrics.jsonl", aggregate_record)
+        tracker.log_evaluation(aggregate_record)
+        payload["policies"][policy_name] = {
+            "opponents": policy_results,
+            "macro_score": macro_score,
+            "member_iterations": [member["iteration"] for member in members[policy_name]],
+        }
+    payload["evaluation_seconds"] = time.perf_counter() - started
+    _write_json_atomic(
+        run_dir / f"learned_league_{iteration:06d}.json", payload
     )
     return payload
 
@@ -970,6 +1217,88 @@ def make_prepare_batch(config: TrainingConfig):
     return prepare_batch
 
 
+def make_natural_castle_metrics(config: TrainingConfig):
+    """Count only actions actually sampled in the ordinary PPO stream."""
+
+    @partial(jax.pmap, axis_name="devices")
+    def natural_metrics(
+        build_actions,
+        legal_build_opportunities,
+        completed_game_with_build,
+        completed_player_game_with_build,
+        completed_player_games,
+        completed_game_builds,
+        terminated,
+        truncated,
+    ):
+        psum = lambda value: jax.lax.psum(value, axis_name="devices")
+        decisions = psum(jnp.asarray(build_actions.size, dtype=jnp.int32))
+        builds = psum(build_actions.sum())
+        eligible = psum(legal_build_opportunities.sum())
+        completed_games = psum(completed_player_games[:, : config.num_envs].sum())
+        completed_player_game_count = psum(completed_player_games.sum())
+        games_with_build = psum(completed_game_with_build.sum())
+        player_games_with_build = psum(completed_player_game_with_build.sum())
+        p0_games_with_build = psum(
+            completed_player_game_with_build[:, : config.num_envs].sum()
+        )
+        p1_games_with_build = psum(
+            completed_player_game_with_build[:, config.num_envs :].sum()
+        )
+        p0_games = psum(completed_player_games[:, : config.num_envs].sum())
+        p1_games = psum(completed_player_games[:, config.num_envs :].sum())
+        return {
+            "ppo_castle/count/builds": builds,
+            "ppo_castle/count/completed_game_builds": psum(
+                completed_game_builds.sum()
+            ),
+            "ppo_castle/count/decisions": decisions,
+            "ppo_castle/count/eligible_decisions": eligible,
+            "ppo_castle/count/completed_games": completed_games,
+            "ppo_castle/count/completed_player_games": completed_player_game_count,
+            "ppo_castle/count/games_with_build": games_with_build,
+            "ppo_castle/count/player_games_with_build": player_games_with_build,
+            "ppo_castle/count/terminated_games": psum(
+                terminated[:, : config.num_envs].sum()
+            ),
+            "ppo_castle/count/truncated_games": psum(
+                truncated[:, : config.num_envs].sum()
+            ),
+            "ppo_castle/count/seat0_games_with_build": p0_games_with_build,
+            "ppo_castle/count/seat1_games_with_build": p1_games_with_build,
+            "ppo_castle/count/seat0_completed_games": p0_games,
+            "ppo_castle/count/seat1_completed_games": p1_games,
+        }
+
+    return natural_metrics
+
+
+def _natural_castle_rates(counts: dict[str, float], prefix="ppo_castle/"):
+    get = lambda name: counts.get(f"ppo_castle/count/{name}", 0.0)
+    safe = lambda numerator, denominator: numerator / denominator if denominator else 0.0
+    return {
+        f"{prefix}build_move_rate": safe(get("builds"), get("decisions")),
+        f"{prefix}build_game_rate": safe(
+            get("games_with_build"), get("completed_games")
+        ),
+        f"{prefix}build_player_game_rate": safe(
+            get("player_games_with_build"), get("completed_player_games")
+        ),
+        f"{prefix}builds_per_game": safe(
+            get("completed_game_builds"), get("completed_games")
+        ),
+        f"{prefix}build_eligible_rate": safe(
+            get("builds"), get("eligible_decisions")
+        ),
+        f"{prefix}seat0_build_game_rate": safe(
+            get("seat0_games_with_build"), get("seat0_completed_games")
+        ),
+        f"{prefix}seat1_build_game_rate": safe(
+            get("seat1_games_with_build"), get("seat1_completed_games")
+        ),
+    }
+
+
 def make_ema_step(config: TrainingConfig):
     """One compiled dispatch updating the replicated EMA tree in place of
     eager per-leaf host operations."""
@@ -1026,6 +1355,57 @@ def make_update_shard(config: TrainingConfig, static, optimizer):
     return update_shard
 
 
+def make_counterfactual_update_shard(config: TrainingConfig, static, optimizer):
+    """Treatment-only pmap; the disabled control never traces this function."""
+
+    @partial(jax.pmap, axis_name="devices")
+    def update_shard(
+        params,
+        opt_state,
+        batch,
+        indices,
+        counterfactual,
+        rng,
+        entropy_coefficient,
+        actor_coefficient_scale,
+        critic_coefficient_scale,
+    ):
+        keys = jax.random.split(rng)
+        next_rng, update_rng = keys[0], keys[1]
+        shard_network = eqx.combine(params, static)
+        shard_network, opt_state, metrics = counterfactual_ppo_epoch(
+            shard_network,
+            opt_state,
+            batch,
+            indices,
+            counterfactual,
+            optimizer,
+            update_rng,
+            minibatch_size=config.minibatch_size,
+            clip_epsilon=config.clip_epsilon,
+            value_coefficient=config.value_coefficient,
+            entropy_coefficient=entropy_coefficient,
+            value_bins=config.value_bins,
+            value_min=config.value_min,
+            value_max=config.value_max,
+            hl_gauss_sigma=config.hl_gauss_sigma,
+            actor_coefficient=config.counterfactual_actor_coefficient,
+            successor_coefficient=config.counterfactual_value_coefficient,
+            delta_coefficient=config.counterfactual_delta_coefficient,
+            actor_temperature=config.counterfactual_actor_temperature,
+            actor_weight_scale=config.counterfactual_actor_weight_scale,
+            huber_delta=config.counterfactual_huber_delta,
+            actor_coefficient_scale=actor_coefficient_scale,
+            critic_coefficient_scale=critic_coefficient_scale,
+            axis_name="devices",
+        )
+        params, _ = eqx.partition(shard_network, eqx.is_inexact_array)
+        metrics = jax.lax.pmean(metrics, axis_name="devices")
+        return params, opt_state, next_rng, metrics
+
+    return update_shard
+
+
 def train(
     config: TrainingConfig,
     *,
@@ -1069,7 +1449,14 @@ def train(
     )
     metrics_path = run_dir / "metrics.jsonl"
 
-    print(f"Devices ({jax.device_count()}): {jax.devices()}")
+    device_count = jax.device_count()
+    print(f"Devices ({device_count}): {jax.devices()}")
+    expected_device_count = os.environ.get("EXPECTED_JAX_DEVICE_COUNT")
+    if expected_device_count is not None and device_count != int(expected_device_count):
+        raise RuntimeError(
+            f"Expected {expected_device_count} visible JAX devices, found "
+            f"{device_count}: {jax.devices()}"
+        )
     print(
         f"Competition baseline: L={config.depth}, d={config.embed_dim}, "
         f"heads={config.attention_heads}, architecture={config.model_architecture}, "
@@ -1089,36 +1476,119 @@ def train(
     stage_index = 0
     fixed_league_network = None
     if resume:
+        actual_resume_sha256 = _sha256_file(Path(resume))
+        resume_is_parent_checkpoint = (
+            config.resume_checkpoint_sha256 is None
+            or actual_resume_sha256 == config.resume_checkpoint_sha256
+        )
         if config.resume_checkpoint_sha256:
-            actual_sha256 = _sha256_file(Path(resume))
-            if actual_sha256 != config.resume_checkpoint_sha256:
+            recovery_inside_run = (
+                Path(resume).resolve().parent == run_dir.resolve()
+                or run_dir.resolve() in Path(resume).resolve().parents
+            )
+            if not resume_is_parent_checkpoint and not recovery_inside_run:
                 raise ValueError(
                     f"Resume checkpoint SHA-256 mismatch: expected "
-                    f"{config.resume_checkpoint_sha256}, got {actual_sha256}"
+                    f"{config.resume_checkpoint_sha256}, got {actual_resume_sha256}"
                 )
-        skeleton = (
-            network,
-            optimizer_state,
-            ema_network,
-            jnp.int32(0),
-            jnp.int32(0),
-            key,
-        )
-        (
-            network,
-            optimizer_state,
-            ema_network,
-            saved_iteration,
-            saved_stage_index,
-            key,
-        ) = _load_checkpoint_state(resume, skeleton, config)
+        if (
+            config.counterfactual_castle_training
+            or config.residual_build_kind_head
+        ) and resume_is_parent_checkpoint and not (
+            config.resume_checkpoint_has_counterfactual_heads
+        ):
+            historical_config = replace(
+                config,
+                counterfactual_castle_training=False,
+                residual_build_kind_head=False,
+            )
+            historical_network = build_network(historical_config, network_key)
+            historical_optimizer_state = optimizer.init(
+                eqx.filter(historical_network, eqx.is_inexact_array)
+            )
+            historical_skeleton = (
+                historical_network,
+                historical_optimizer_state,
+                historical_network,
+                jnp.int32(0),
+                jnp.int32(0),
+                key,
+            )
+            (
+                loaded_raw,
+                loaded_optimizer_state,
+                loaded_ema,
+                saved_iteration,
+                saved_stage_index,
+                key,
+            ) = _load_checkpoint_state(resume, historical_skeleton, historical_config)
+            network = _attach_zero_build_difference_head(loaded_raw, network)
+            ema_network = _attach_zero_build_difference_head(loaded_ema, ema_network)
+            optimizer_state = _migrate_optimizer_state_with_zero_head(
+                loaded_optimizer_state,
+                optimizer_state,
+            )
+            _write_json_atomic(
+                run_dir / "checkpoint_schema.json",
+                {
+                    "schema": "castle_counterfactual_training",
+                    "version": config.counterfactual_schema_version,
+                    "source_checkpoint": str(resume),
+                    "source_checkpoint_sha256": actual_resume_sha256,
+                    "auxiliary_head": "spatial_build_difference",
+                    "auxiliary_head_initialization": "zeros",
+                    "actor_build_kind_head": "scalar_residual",
+                    "actor_build_kind_head_initialization": "zeros",
+                    "actor_build_kind_head_deployment_visible": True,
+                },
+            )
+        else:
+            skeleton = (
+                network,
+                optimizer_state,
+                ema_network,
+                jnp.int32(0),
+                jnp.int32(0),
+                key,
+            )
+            (
+                network,
+                optimizer_state,
+                ema_network,
+                saved_iteration,
+                saved_stage_index,
+                key,
+            ) = _load_checkpoint_state(resume, skeleton, config)
+        if (
+            config.counterfactual_castle_training
+            and config.resume_checkpoint_has_counterfactual_heads
+            and not (run_dir / "checkpoint_schema.json").exists()
+        ):
+            _write_json_atomic(
+                run_dir / "checkpoint_schema.json",
+                {
+                    "schema": "castle_counterfactual_training",
+                    "version": config.counterfactual_schema_version,
+                    "source_checkpoint": str(resume),
+                    "source_checkpoint_sha256": actual_resume_sha256,
+                    "auxiliary_head": "spatial_build_difference",
+                    "auxiliary_head_initialization": "resumed",
+                    "actor_build_kind_head": "scalar_residual",
+                    "actor_build_kind_head_initialization": "resumed",
+                    "actor_build_kind_head_deployment_visible": True,
+                },
+            )
         start_iteration = int(saved_iteration)
         stage_index = int(saved_stage_index)
         if stage_index >= len(config.curriculum):
             raise ValueError(
                 f"Checkpoint curriculum stage {stage_index} is not present in the config"
             )
-        if config.parent_final_iteration and start_iteration != config.parent_final_iteration:
+        if (
+            config.parent_final_iteration
+            and resume_is_parent_checkpoint
+            and start_iteration != config.parent_final_iteration
+        ):
             raise ValueError(
                 f"Expected parent iteration {config.parent_final_iteration}, "
                 f"checkpoint contains {start_iteration}"
@@ -1128,7 +1598,10 @@ def train(
                 f"Expected resume stage {config.resume_start_stage}, "
                 f"checkpoint contains {stage_index}"
             )
-        if config.league_checkpoint_path and Path(config.league_checkpoint_path).resolve() == Path(resume).resolve():
+        if config.league_checkpoint_path and (
+            Path(config.league_checkpoint_path).resolve() == Path(resume).resolve()
+            or config.league_checkpoint_sha256 == actual_resume_sha256
+        ):
             fixed_league_network = (
                 ema_network if config.league_checkpoint_policy == "ema" else network
             )
@@ -1143,7 +1616,7 @@ def train(
         config,
         start_iteration=start_iteration,
         resume=resume,
-        device_count=jax.device_count(),
+        device_count=device_count,
     )
 
     stage = config.curriculum[stage_index]
@@ -1213,6 +1686,102 @@ def train(
         fixed_league_network = (
             fixed_ema if config.league_checkpoint_policy == "ema" else fixed_raw
         )
+
+    learned_league_enabled = bool(
+        config.learned_league_eval_every
+        or config.learned_league_extra_eval_iterations
+    )
+    learned_league_members: dict[str, list[dict]] = {"raw": [], "ema": []}
+    if learned_league_enabled:
+        anchor_path = Path(config.learned_league_anchor_path)
+        anchor_sha256 = _sha256_file(anchor_path)
+        if anchor_sha256 != config.learned_league_anchor_sha256:
+            raise ValueError(
+                "Learned league anchor SHA-256 mismatch: expected "
+                f"{config.learned_league_anchor_sha256}, got {anchor_sha256}"
+            )
+        if resume and Path(resume).resolve() == anchor_path.resolve():
+            anchor_raw, anchor_ema = network, ema_network
+            anchor_iteration = start_iteration
+        else:
+            anchor_skeleton = (
+                network,
+                optimizer_state,
+                ema_network,
+                jnp.int32(0),
+                jnp.int32(0),
+                key,
+            )
+            (
+                anchor_raw,
+                _,
+                anchor_ema,
+                anchor_saved_iteration,
+                _,
+                _,
+            ) = _load_checkpoint_state(anchor_path, anchor_skeleton, config)
+            anchor_iteration = int(anchor_saved_iteration)
+        for policy_name, anchor_network in (
+            ("raw", anchor_raw),
+            ("ema", anchor_ema),
+        ):
+            learned_league_members[policy_name].append(
+                {
+                    "name": config.learned_league_anchor_name,
+                    "iteration": anchor_iteration,
+                    "sha256": anchor_sha256,
+                    "network": anchor_network,
+                }
+            )
+
+        # A recovery resume reconstructs already-admitted snapshots from the
+        # numbered archives. A fresh 4,400 continuation has no such files yet.
+        first_admission = (
+            (anchor_iteration // config.learned_league_add_every) + 1
+        ) * config.learned_league_add_every
+        for snapshot_iteration in range(
+            first_admission,
+            start_iteration + 1,
+            config.learned_league_add_every,
+        ):
+            snapshot_path = run_dir / f"checkpoint_{snapshot_iteration:06d}.eqx"
+            if not snapshot_path.is_file():
+                continue
+            snapshot_skeleton = (
+                network,
+                optimizer_state,
+                ema_network,
+                jnp.int32(0),
+                jnp.int32(0),
+                key,
+            )
+            (
+                snapshot_raw,
+                _,
+                snapshot_ema,
+                loaded_iteration,
+                _,
+                _,
+            ) = _load_checkpoint_state(snapshot_path, snapshot_skeleton, config)
+            if int(loaded_iteration) != snapshot_iteration:
+                raise ValueError(
+                    f"League snapshot {snapshot_path} contains iteration "
+                    f"{int(loaded_iteration)}"
+                )
+            snapshot_sha256 = _sha256_file(snapshot_path)
+            for policy_name, snapshot_network in (
+                ("raw", snapshot_raw),
+                ("ema", snapshot_ema),
+            ):
+                learned_league_members[policy_name].append(
+                    {
+                        "name": f"continuation_{snapshot_iteration:06d}",
+                        "iteration": snapshot_iteration,
+                        "sha256": snapshot_sha256,
+                        "network": snapshot_network,
+                    }
+                )
+        _write_learned_league_manifest(run_dir, learned_league_members)
     (run_dir / "initialization.json").write_text(
         json.dumps(initialization, indent=2, sort_keys=True), encoding="utf-8"
     )
@@ -1253,6 +1822,82 @@ def train(
             config, evaluation_environment, config.eval_games // 2, config.truncation
         )
 
+    counterfactual_buffer = None
+    counterfactual_root_key = None
+    if config.counterfactual_castle_training:
+        counterfactual_buffer = CastleCounterfactualBuffer(
+            capacity=config.counterfactual_buffer_capacity,
+            max_age=config.counterfactual_max_age_iterations,
+            repetitions=config.counterfactual_repetitions,
+            run_dir=run_dir,
+        )
+        counterfactual_root_key = jax.random.fold_in(
+            jax.random.PRNGKey(config.seed), 0xC0A57E
+        )
+        if any((run_dir / "counterfactual_buffer").glob("refresh_*.npz")):
+            counterfactual_buffer.load_completed_shards(start_iteration)
+        counterfactual_needed_after_resume = bool(
+            _linear_anneal_multiplier(
+                start_iteration + 1,
+                config.counterfactual_actor_anneal_start,
+                config.counterfactual_actor_anneal_end,
+            )
+            > 0.0
+            or _linear_anneal_multiplier(
+                start_iteration + 1,
+                config.counterfactual_critic_anneal_start,
+                config.counterfactual_critic_anneal_end,
+            )
+            > 0.0
+        )
+        if counterfactual_buffer.size == 0 and counterfactual_needed_after_resume:
+            initial_generation_started = time.perf_counter()
+            refresh, refresh_metrics = generate_counterfactual_refresh(
+                network=network,
+                pool_replicated=pool_replicated,
+                key=jax.random.fold_in(counterfactual_root_key, start_iteration),
+                config=config,
+                environment=environment,
+                iteration=start_iteration,
+            )
+            shard_path = counterfactual_buffer.add(refresh, start_iteration)
+            refresh_metrics.update(
+                {
+                    "iteration": start_iteration,
+                    "counterfactual/ready_iteration": start_iteration,
+                    "counterfactual/buffer_size": counterfactual_buffer.size,
+                    "counterfactual/generation_seconds": time.perf_counter()
+                    - initial_generation_started,
+                    "counterfactual/shard": str(shard_path),
+                }
+            )
+            _write_metrics(metrics_path, refresh_metrics)
+            tracker.log_evaluation(refresh_metrics)
+            print(
+                "Initial counterfactual buffer ready: "
+                f"{counterfactual_buffer.size} candidates in "
+                f"{refresh_metrics['counterfactual/generation_seconds']:.1f}s"
+            )
+        elif counterfactual_buffer.size:
+            print(
+                "Restored counterfactual buffer: "
+                f"{counterfactual_buffer.size} candidates through iteration "
+                f"{start_iteration}"
+            )
+        else:
+            print(
+                "Counterfactual schedules are complete; continuing without a "
+                "counterfactual replay buffer"
+            )
+        _write_json_atomic(
+            run_dir / "counterfactual_rng.json",
+            {
+                "scheme": "jax.random.fold_in(root, raw_generator_iteration)",
+                "root": np.asarray(jax.device_get(counterfactual_root_key)).tolist(),
+                "ppo_rng_untouched": True,
+            },
+        )
+
     parameters, static = eqx.partition(network, eqx.is_inexact_array)
     parameters = _replicate_for_pmap(parameters)
     optimizer_state = _replicate_for_pmap(optimizer_state)
@@ -1275,6 +1920,9 @@ def train(
     per_device_memory = _batched_memory(config)
     memory_zero = _replicate_for_pmap(per_device_memory)
     memory_one = _replicate_for_pmap(per_device_memory)
+    per_device_castle_flags = jnp.zeros((config.num_envs,), dtype=jnp.int32)
+    castle_flags_zero = _replicate_for_pmap(per_device_castle_flags)
+    castle_flags_one = _replicate_for_pmap(per_device_castle_flags)
     key, rollout_key = jax.random.split(key)
     rollout_keys = jax.random.split(rollout_key, jax.device_count())
 
@@ -1284,6 +1932,8 @@ def train(
         rng,
         mem_zero,
         mem_one,
+        castle_zero,
+        castle_one,
         pool_shard,
         potential_shaping_scale,
         tactical_build_logit_boost,
@@ -1298,6 +1948,9 @@ def train(
             mem_zero,
             mem_one,
             config.num_steps,
+            castle_flags_player_zero=castle_zero,
+            castle_flags_player_one=castle_one,
+            return_castle_state=True,
             observation_schema=config.observation_schema,
             potential_shaping_scale=potential_shaping_scale,
             tactical_build_logit_boost=tactical_build_logit_boost,
@@ -1317,8 +1970,14 @@ def train(
         2 * config.num_envs * config.num_steps * config.advantage_top_fraction
     )
     prepare_batch = make_prepare_batch(config)
+    natural_castle_metrics = make_natural_castle_metrics(config)
     ema_step = make_ema_step(config)
-    update_shard = make_update_shard(config, static, optimizer)
+    ppo_update_shard = make_update_shard(config, static, optimizer)
+    counterfactual_update_shard = (
+        make_counterfactual_update_shard(config, static, optimizer)
+        if config.counterfactual_castle_training
+        else None
+    )
 
     device_count = jax.device_count()
     train_started = time.perf_counter()
@@ -1333,11 +1992,31 @@ def train(
     publish_status_offset = 0
     trace_active = False
     trace_stop_iteration = trace_start_iteration + trace_iterations - 1
+    castle_window_counts: dict[str, float] = {}
     for iteration in range(start_iteration, config.num_iterations):
         if stop_requested or (stop_at_unix is not None and time.time() >= stop_at_unix):
             print("Training soft deadline reached before starting another iteration")
             break
         iteration_number = iteration + 1
+        actor_schedule_scale = _linear_anneal_multiplier(
+            iteration_number,
+            config.counterfactual_actor_anneal_start,
+            config.counterfactual_actor_anneal_end,
+        )
+        critic_schedule_scale = _linear_anneal_multiplier(
+            iteration_number,
+            config.counterfactual_critic_anneal_start,
+            config.counterfactual_critic_anneal_end,
+        )
+        counterfactual_active = bool(
+            config.counterfactual_castle_training
+            and (actor_schedule_scale > 0.0 or critic_schedule_scale > 0.0)
+        )
+        cadence_iteration = (
+            iteration_number - start_iteration
+            if config.cadence_relative_to_resume
+            else iteration_number
+        )
         if trace_iterations and iteration_number == trace_start_iteration:
             Path(trace_dir).mkdir(parents=True, exist_ok=True)
             # Python call tracing is already covered by the isolated cProfile
@@ -1373,12 +2052,22 @@ def train(
             (device_count,), tactical_build_logit_boost, dtype=np.float32
         )
         rollout_started = time.perf_counter()
-        states, rollout, rollout_keys, memory_zero, memory_one = rollout_pmapped(
+        (
+            states,
+            rollout,
+            rollout_keys,
+            memory_zero,
+            memory_one,
+            castle_flags_zero,
+            castle_flags_one,
+        ) = rollout_pmapped(
             parameters,
             states,
             rollout_keys,
             memory_zero,
             memory_one,
+            castle_flags_zero,
+            castle_flags_one,
             pool_replicated,
             potential_scale_by_device,
             build_boost_by_device,
@@ -1404,6 +2093,12 @@ def train(
             base_policy_statistics,
             behavior_policy_statistics,
             selected_tactical_build,
+            build_actions,
+            legal_build_opportunities,
+            completed_game_with_build,
+            completed_player_game_with_build,
+            completed_player_games,
+            completed_game_builds,
         ) = rollout
 
         advantages, returns, sample_indices, prep_metrics = prepare_batch(
@@ -1421,6 +2116,16 @@ def train(
             base_policy_statistics,
             behavior_policy_statistics,
         )
+        castle_metrics = natural_castle_metrics(
+            build_actions,
+            legal_build_opportunities,
+            completed_game_with_build,
+            completed_player_game_with_build,
+            completed_player_games,
+            completed_game_builds,
+            terminated,
+            truncated,
+        )
         batch = (
             observations,
             histories,
@@ -1432,6 +2137,93 @@ def train(
             tactical_build_masks,
         )
 
+        counterfactual_epoch = None
+        counterfactual_epoch_metrics = {}
+        counterfactual_actor_scale_by_device = None
+        counterfactual_critic_scale_by_device = None
+        if counterfactual_active:
+            optimizer_minibatches = kept_samples // config.minibatch_size
+            sampled = counterfactual_buffer.sample_epoch(
+                current_iteration=iteration,
+                device_count=device_count,
+                minibatches=optimizer_minibatches,
+                seed=config.seed * 1_000_003 + iteration_number,
+                recent_fraction=config.counterfactual_recent_fraction,
+                actor_uniform_per_device=(
+                    config.counterfactual_actor_uniform_per_device
+                ),
+                actor_positive_per_device=(
+                    config.counterfactual_actor_positive_per_device
+                ),
+                actor_negative_per_device=(
+                    config.counterfactual_actor_negative_per_device
+                ),
+                successor_per_device=(
+                    config.counterfactual_successor_minibatch_size_per_device
+                ),
+            )
+            counterfactual_epoch = jax.tree.map(
+                jnp.asarray,
+                {
+                    "actor_cache": sampled["actor_cache"],
+                    "actor_indices": sampled["actor_indices"],
+                    "actor_inverse_probability": sampled[
+                        "actor_inverse_probability"
+                    ],
+                    "successor_cache": sampled["successor_cache"],
+                    "successor_indices": sampled["successor_indices"],
+                    "gradient_diagnostics_enabled": np.full(
+                        (device_count,),
+                        (iteration_number - start_iteration == 1)
+                        or (
+                            (iteration_number - start_iteration)
+                            % config.counterfactual_refresh_every
+                            == 0
+                        ),
+                        dtype=np.bool_,
+                    ),
+                },
+            )
+            coefficient_scale = min(
+                1.0,
+                counterfactual_buffer.size
+                / config.counterfactual_unique_examples_full_weight,
+            )
+            counterfactual_actor_scale_by_device = np.full(
+                (device_count,),
+                coefficient_scale * actor_schedule_scale,
+                dtype=np.float32,
+            )
+            counterfactual_critic_scale_by_device = np.full(
+                (device_count,),
+                coefficient_scale * critic_schedule_scale,
+                dtype=np.float32,
+            )
+            counterfactual_epoch_metrics = {
+                "counterfactual/buffer_size": counterfactual_buffer.size,
+                "counterfactual/positive_examples": sampled["positive_examples"],
+                "counterfactual/negative_examples": sampled["negative_examples"],
+                "counterfactual/uncertain_examples": sampled[
+                    "uncertain_examples"
+                ],
+                "counterfactual/generator_lag": iteration
+                - sampled["latest_generator_iteration"],
+                "counterfactual/coefficient_scale": coefficient_scale,
+                "counterfactual/actor_schedule_scale": actor_schedule_scale,
+                "counterfactual/critic_schedule_scale": critic_schedule_scale,
+                "counterfactual/actor_total_scale": coefficient_scale
+                * actor_schedule_scale,
+                "counterfactual/critic_total_scale": coefficient_scale
+                * critic_schedule_scale,
+            }
+        elif config.counterfactual_castle_training:
+            counterfactual_epoch_metrics = {
+                "counterfactual/actor_schedule_scale": actor_schedule_scale,
+                "counterfactual/critic_schedule_scale": critic_schedule_scale,
+                "counterfactual/actor_total_scale": 0.0,
+                "counterfactual/critic_total_scale": 0.0,
+            }
+
         update_started = time.perf_counter()
         entropy_coefficient = _entropy_coefficient(config, iteration)
         entropy_by_device = np.full(
@@ -1440,15 +2232,38 @@ def train(
         epochs_used = 0
         metrics = None
         for _ in range(config.ppo_epochs):
-            parameters, optimizer_state, rollout_keys, metrics = update_shard(
-                parameters,
-                optimizer_state,
-                batch,
-                sample_indices,
-                rollout_keys,
-                entropy_by_device,
-                build_boost_by_device,
-            )
+            if counterfactual_active:
+                (
+                    parameters,
+                    optimizer_state,
+                    rollout_keys,
+                    metrics,
+                ) = counterfactual_update_shard(
+                    parameters,
+                    optimizer_state,
+                    batch,
+                    sample_indices,
+                    counterfactual_epoch,
+                    rollout_keys,
+                    entropy_by_device,
+                    counterfactual_actor_scale_by_device,
+                    counterfactual_critic_scale_by_device,
+                )
+            else:
+                (
+                    parameters,
+                    optimizer_state,
+                    rollout_keys,
+                    metrics,
+                ) = ppo_update_shard(
+                    parameters,
+                    optimizer_state,
+                    batch,
+                    sample_indices,
+                    rollout_keys,
+                    entropy_by_device,
+                    build_boost_by_device,
+                )
             epochs_used += 1
             # The KL early stop only matters when there is a next epoch to
             # skip; reading it at ppo_epochs == 1 would just force a device
@@ -1465,13 +2280,23 @@ def train(
         # One transfer for everything the host needs this iteration: the
         # tiny replicated metric arrays come down together and shard 0 is
         # picked on the host, replacing ~20 individual blocking pulls.
-        host_metrics = jax.device_get({**prep_metrics, **metrics})
+        host_metrics = jax.device_get({**prep_metrics, **castle_metrics, **metrics})
         host_metrics = {name: value[0] for name, value in host_metrics.items()}
         episodes = int(host_metrics.pop("episodes"))
         wins = int(host_metrics.pop("wins"))
         losses = int(host_metrics.pop("losses"))
         draws = episodes - wins - losses
         explained_variance = float(host_metrics.pop("explained_variance"))
+        per_iteration_castle_counts = {
+            name: float(value)
+            for name, value in host_metrics.items()
+            if name.startswith("ppo_castle/count/")
+        }
+        per_iteration_castle_rates = _natural_castle_rates(
+            per_iteration_castle_counts
+        )
+        for name, value in per_iteration_castle_counts.items():
+            castle_window_counts[name] = castle_window_counts.get(name, 0.0) + value
 
         iteration_seconds = time.perf_counter() - iteration_started
         total_samples = device_count * 2 * config.num_envs * config.num_steps
@@ -1509,6 +2334,8 @@ def train(
             "castle_potential_shaping_scale": potential_shaping_scale,
             "castle_tactical_logit_boost": tactical_build_logit_boost,
             "epochs_used": epochs_used,
+            **counterfactual_epoch_metrics,
+            **per_iteration_castle_rates,
             **{name: float(value) for name, value in host_metrics.items()},
         }
         if config.debug_timing:
@@ -1518,7 +2345,22 @@ def train(
                 0.0, iteration_seconds - rollout_seconds - update_seconds
             )
 
-        if (iteration + 1) % config.metrics_every == 0:
+        if (iteration_number - start_iteration) % 50 == 0:
+            window_record = {
+                "iteration": iteration_number,
+                **{
+                    name.replace("ppo_castle/count/", "ppo_castle/window50/count/"): value
+                    for name, value in castle_window_counts.items()
+                },
+                **_natural_castle_rates(
+                    castle_window_counts, prefix="ppo_castle/window50/"
+                ),
+            }
+            _write_metrics(metrics_path, window_record)
+            tracker.log_evaluation(window_record)
+            castle_window_counts = {}
+
+        if cadence_iteration % config.metrics_every == 0:
             _write_metrics(metrics_path, record)
             tracker.log_training(record)
             print(
@@ -1528,8 +2370,60 @@ def train(
                 f"EV {explained_variance:.2f} | {samples_per_second:,.0f} samples/s"
             )
 
+        # Release the large PPO rollout and replay-cache views before periodic
+        # paired generation or league evaluation allocates its own trajectories.
+        del rollout, batch, observations, histories, masks, actions, old_log_probs
+        del tactical_build_masks, actor_rewards, potential_rewards
+        del base_policy_statistics, behavior_policy_statistics
+        del selected_tactical_build
+        del build_actions, legal_build_opportunities
+        del completed_game_with_build, completed_player_game_with_build
+        del completed_player_games, completed_game_builds
+        del values, next_values, rewards, terminated, truncated, winners
+        del advantages, returns, sample_indices
+        if counterfactual_epoch is not None:
+            del counterfactual_epoch
+
+        should_refresh_counterfactual = (
+            counterfactual_active
+            and (iteration_number - start_iteration)
+            % config.counterfactual_refresh_every
+            == 0
+            and iteration_number < config.num_iterations
+        )
+        if should_refresh_counterfactual:
+            generation_started = time.perf_counter()
+            generator_network = eqx.combine(
+                _first_pmap_replica_to_host(parameters), static
+            )
+            refresh, refresh_metrics = generate_counterfactual_refresh(
+                network=generator_network,
+                pool_replicated=pool_replicated,
+                key=jax.random.fold_in(counterfactual_root_key, iteration_number),
+                config=config,
+                environment=environment,
+                iteration=iteration_number,
+            )
+            shard_path = counterfactual_buffer.add(refresh, iteration_number)
+            generation_record = {
+                "iteration": iteration_number,
+                **refresh_metrics,
+                "counterfactual/buffer_size": counterfactual_buffer.size,
+                "counterfactual/generation_seconds": time.perf_counter()
+                - generation_started,
+                "counterfactual/shard": str(shard_path),
+            }
+            _write_metrics(metrics_path, generation_record)
+            tracker.log_evaluation(generation_record)
+            print(
+                "  counterfactual refresh: "
+                f"{len(refresh['build_action'])} candidates, "
+                f"buffer={counterfactual_buffer.size}, "
+                f"{generation_record['counterfactual/generation_seconds']:.1f}s"
+            )
+
         should_evaluate = config.eval_every > 0 and (
-            (iteration + 1) % config.eval_every == 0
+            cadence_iteration % config.eval_every == 0
         )
         if should_evaluate:
             evaluation_started = time.perf_counter()
@@ -1564,6 +2458,12 @@ def train(
                     states = sample_initial_states_pmapped(pool_replicated, device_keys)
                     memory_zero = _replicate_for_pmap(per_device_memory)
                     memory_one = _replicate_for_pmap(per_device_memory)
+                    castle_flags_zero = _replicate_for_pmap(
+                        per_device_castle_flags
+                    )
+                    castle_flags_one = _replicate_for_pmap(
+                        per_device_castle_flags
+                    )
 
                     evaluation_environment = make_environment(
                         config, stage, pool_size=eval_pool_size
@@ -1597,8 +2497,11 @@ def train(
             _write_metrics(metrics_path, evaluation_record)
             tracker.log_evaluation(evaluation_record)
 
-        should_archive = (iteration + 1) % config.checkpoint_every == 0
-        should_save_latest = (iteration + 1) % latest_every == 0
+        should_archive = (
+            cadence_iteration % config.checkpoint_every == 0
+            or iteration_number in config.checkpoint_extra_iterations
+        )
+        should_save_latest = cadence_iteration % latest_every == 0
         if should_archive or should_save_latest:
             checkpoint_started = time.perf_counter()
             checkpoint_metadata = _save_periodic_checkpoint(
@@ -1628,6 +2531,32 @@ def train(
                 "checkpoint/save_seconds": time.perf_counter()
                 - checkpoint_started,
             }
+            if config.counterfactual_castle_training:
+                buffer_manifest = (
+                    run_dir / "counterfactual_buffer" / "manifest.json"
+                )
+                counterfactual_checkpoint_state = {
+                    "schema": "castle_counterfactual_checkpoint_sidecar",
+                    "schema_version": config.counterfactual_schema_version,
+                    "checkpoint_iteration": iteration + 1,
+                    "buffer_size": counterfactual_buffer.size,
+                    "buffer_manifest": str(buffer_manifest),
+                    "latest_generator_iteration": (
+                        _latest_counterfactual_generator_iteration(
+                            counterfactual_buffer
+                        )
+                    ),
+                    "counterfactual_ready_iteration": start_iteration,
+                }
+                sidecar_name = (
+                    f"checkpoint_{iteration + 1:06d}.counterfactual.json"
+                    if should_archive
+                    else "latest.counterfactual.json"
+                )
+                _write_json_atomic(
+                    run_dir / sidecar_name, counterfactual_checkpoint_state
+                )
+                timing_record["checkpoint/counterfactual_state_present"] = 1
             if should_archive:
                 publication = _request_checkpoint_publication(
                     run_dir, checkpoint_metadata
@@ -1638,7 +2567,7 @@ def train(
             tracker.log_evaluation(timing_record)
 
         should_run_league = config.league_eval_every > 0 and (
-            (iteration + 1) % config.league_eval_every == 0
+            cadence_iteration % config.league_eval_every == 0
         )
         if should_run_league:
             league_started = time.perf_counter()
@@ -1698,13 +2627,68 @@ def train(
                 )
             last_league_finished_at = league_finished
 
+        should_run_learned_league = learned_league_enabled and (
+            (
+                config.learned_league_eval_every > 0
+                and iteration_number % config.learned_league_eval_every == 0
+            )
+            or iteration_number in config.learned_league_extra_eval_iterations
+        )
+        if should_run_learned_league:
+            learned_current_raw = eqx.combine(
+                _first_pmap_replica_to_host(parameters), static
+            )
+            learned_current_ema = eqx.combine(
+                _first_pmap_replica_to_host(ema_parameters), static
+            )
+            _run_learned_checkpoint_league(
+                config,
+                {"raw": learned_current_raw, "ema": learned_current_ema},
+                learned_league_members,
+                tracker,
+                run_dir,
+                iteration_number,
+            )
+            if iteration_number % config.learned_league_add_every == 0:
+                archive_path = run_dir / f"checkpoint_{iteration_number:06d}.eqx"
+                if not archive_path.is_file():
+                    raise FileNotFoundError(
+                        "A growing-league admission requires its numbered training "
+                        f"checkpoint: {archive_path}"
+                    )
+                archive_sha256 = _sha256_file(archive_path)
+                member_name = f"continuation_{iteration_number:06d}"
+                for policy_name, policy_network in (
+                    ("raw", learned_current_raw),
+                    ("ema", learned_current_ema),
+                ):
+                    learned_league_members[policy_name].append(
+                        {
+                            "name": member_name,
+                            "iteration": iteration_number,
+                            "sha256": archive_sha256,
+                            "network": policy_network,
+                        }
+                    )
+                _write_learned_league_manifest(run_dir, learned_league_members)
+                admission_record = {
+                    "iteration": iteration_number,
+                    "learned_league/admitted": 1,
+                    "learned_league/member_count": len(
+                        learned_league_members["raw"]
+                    ),
+                    "learned_league/admitted_checkpoint_sha256": archive_sha256,
+                }
+                _write_metrics(metrics_path, admission_record)
+                tracker.log_evaluation(admission_record)
+
         publish_status_offset = _ingest_publish_status(
             publish_status_path, publish_status_offset, tracker, metrics_path
         )
 
         if (
             config.reset_pool_every > 0
-            and (iteration + 1) % config.reset_pool_every == 0
+            and cadence_iteration % config.reset_pool_every == 0
         ):
             pool_reset_started = time.perf_counter()
             key, pool_key = jax.random.split(key)
@@ -1717,13 +2701,6 @@ def train(
                 }
                 _write_metrics(metrics_path, timing_record)
                 tracker.log_evaluation(timing_record)
-
-        del rollout, batch, observations, histories, masks, actions, old_log_probs
-        del tactical_build_masks, actor_rewards, potential_rewards
-        del base_policy_statistics, behavior_policy_statistics
-        del selected_tactical_build
-        del values, next_values, rewards, terminated, truncated, winners
-        del advantages, returns, sample_indices
 
         if trace_active and iteration_number == trace_stop_iteration:
             jax.block_until_ready(parameters)
@@ -1760,6 +2737,25 @@ def train(
     (run_dir / "terminal_checkpoint.json").write_text(
         json.dumps(final_metadata, indent=2, sort_keys=True), encoding="utf-8"
     )
+    if config.counterfactual_castle_training:
+        _write_json_atomic(
+            run_dir / "terminal.counterfactual.json",
+            {
+                "schema": "castle_counterfactual_checkpoint_sidecar",
+                "schema_version": config.counterfactual_schema_version,
+                "checkpoint_iteration": completed_iterations,
+                "buffer_size": counterfactual_buffer.size,
+                "buffer_manifest": str(
+                    run_dir / "counterfactual_buffer" / "manifest.json"
+                ),
+                "latest_generator_iteration": (
+                    _latest_counterfactual_generator_iteration(
+                        counterfactual_buffer
+                    )
+                ),
+                "counterfactual_ready_iteration": start_iteration,
+            },
+        )
     tracker.log_evaluation(
         {
             "iteration": completed_iterations,
@@ -1776,6 +2772,37 @@ def train(
     )
     terminal_publication = _request_checkpoint_publication(run_dir, final_metadata)
     tracker.log_checkpoint_export(terminal_publication)
+    if config.terminal_raw_ema_head_to_head_maps > 0:
+        terminal_head_to_head_started = time.perf_counter()
+        terminal_head_to_head = _evaluate_network_pair(
+            config,
+            final_network,
+            final_ema_network,
+            n_maps=config.terminal_raw_ema_head_to_head_maps,
+            seed=config.learned_league_seed + 1,
+        )
+        terminal_head_to_head["evaluation_seconds"] = (
+            time.perf_counter() - terminal_head_to_head_started
+        )
+        terminal_payload = {
+            "schema": "terminal_raw_vs_ema_paired_head_to_head",
+            "iteration": completed_iterations,
+            "seed": config.learned_league_seed + 1,
+            "maps": config.terminal_raw_ema_head_to_head_maps,
+            "games": 2 * config.terminal_raw_ema_head_to_head_maps,
+            "perspective": "raw_as_policy_a_vs_ema_as_policy_b",
+            "result": terminal_head_to_head,
+        }
+        _write_json_atomic(run_dir / "terminal_raw_vs_ema.json", terminal_payload)
+        terminal_record = {
+            "iteration": completed_iterations,
+            **{
+                f"terminal_raw_vs_ema/{name}": value
+                for name, value in terminal_head_to_head.items()
+            },
+        }
+        _write_metrics(metrics_path, terminal_record)
+        tracker.log_evaluation(terminal_record)
     if config.league_eval_after_training:
         terminal_policies = {
             name: final_network if name == "raw" else final_ema_network

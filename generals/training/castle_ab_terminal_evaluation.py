@@ -23,10 +23,18 @@ def _sha256(path: Path) -> str:
 
 def _spawn(command: list[str], gpu: int, log_path: Path) -> tuple[subprocess.Popen, object]:
     environment = os.environ.copy()
+    project_root = str(Path(__file__).resolve().parents[2])
+    inherited_pythonpath = environment.get("PYTHONPATH")
     environment.update(
         {
             "CUDA_VISIBLE_DEVICES": str(gpu),
             "PYTHONUNBUFFERED": "1",
+            "PYTHONPATH": (
+                f"{project_root}:{inherited_pythonpath}"
+                if inherited_pythonpath
+                else project_root
+            ),
+            "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
             "JAX_COMPILATION_CACHE_DIR": str(
                 log_path.parent / "jax_compilation_cache" / f"gpu_{gpu}"
             ),
@@ -82,7 +90,9 @@ def run(args: argparse.Namespace) -> dict:
     for index, (arm, config_path) in enumerate(
         (("control", args.control_config), ("treatment", args.treatment_config))
     ):
-        commands.append(
+        selfplay_output = args.output_dir / f"selfplay_{arm}.json"
+        if not selfplay_output.is_file():
+            commands.append(
             (
                 f"selfplay_{arm}",
                 [
@@ -99,17 +109,21 @@ def run(args: argparse.Namespace) -> dict:
                     "--seed",
                     str(args.seed),
                     "--policy",
-                    "both",
+                    "raw",
                     "--sampling",
                     "categorical",
                     "--output",
-                    str(args.output_dir / f"selfplay_{arm}.json"),
+                    str(selfplay_output),
                 ],
                 4 + index,
             )
-        )
-        for policy_index, policy in enumerate(("raw", "ema")):
-            commands.append(
+            )
+        for policy_index, policy in enumerate(("raw",)):
+            atlas_dir = args.output_dir / f"atlas_{arm}_{policy}"
+            if not (atlas_dir / "atlas.json").is_file() or not (
+                atlas_dir / "paired_rollouts.npz"
+            ).is_file():
+                commands.append(
                 (
                     f"atlas_{arm}_{policy}",
                     [
@@ -122,13 +136,17 @@ def run(args: argparse.Namespace) -> dict:
                         "--policy",
                         policy,
                         "--expected-iteration",
-                        "4003",
+                        str(
+                            control_config.num_iterations
+                            if arm == "control"
+                            else treatment_config.num_iterations
+                        ),
                         "--source-checkpoint",
                         str(args.parent_checkpoint),
                         "--source-config",
                         str(args.control_config),
                         "--source-policy",
-                        "ema",
+                        "raw",
                         "--source-games",
                         "1024",
                         "--collection-batch-size",
@@ -142,12 +160,13 @@ def run(args: argparse.Namespace) -> dict:
                         "--seed",
                         str(args.seed),
                         "--output-dir",
-                        str(args.output_dir / f"atlas_{arm}_{policy}"),
+                        str(atlas_dir),
                     ],
                     index * 2 + policy_index,
                 )
-            )
-    _run_checked(commands, args.output_dir)
+                )
+    if commands:
+        _run_checked(commands, args.output_dir)
 
     reports = {}
     state_hashes = set()
@@ -156,7 +175,7 @@ def run(args: argparse.Namespace) -> dict:
         reports[f"selfplay_{arm}"] = json.loads(
             selfplay_path.read_text(encoding="utf-8")
         )
-        for policy in ("raw", "ema"):
+        for policy in ("raw",):
             atlas_dir = args.output_dir / f"atlas_{arm}_{policy}"
             atlas_report = json.loads(
                 (atlas_dir / "atlas.json").read_text(encoding="utf-8")

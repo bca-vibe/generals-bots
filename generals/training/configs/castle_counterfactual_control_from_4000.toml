@@ -1,0 +1,128 @@
+[training]
+run_name = "castle_counterfactual_ppo_control_from_004000_20260805"
+seed = 44
+output_dir = "runs"
+wandb_project = "generals-bots"
+wandb_entity = "bcarnold-independent"
+wandb_group = "castle_counterfactual_ppo_ab_from_004000_20260805"
+wandb_run_id = "castle-counterfactual-ppo-control-from-004000-20260805"
+wandb_run_name = "Castle counterfactual PPO A/B · control · from 4000"
+wandb_job_type = "training-ab-continuation"
+wandb_tags = ["castle-counterfactual-ab", "control", "lambda097", "conv-transformer", "d448", "4xh100", "resume-control-4000", "competition"]
+
+parent_wandb_run_id = "castle-ab-lambda097-control-from-003003-20260804"
+parent_wandb_url = "https://wandb.ai/bcarnold-independent/generals-bots/runs/castle-ab-lambda097-control-from-003003-20260804"
+parent_final_iteration = 4000
+parent_final_samples = 8388608000
+resume_checkpoint_source = "bca-vibe/generals-bot@main:runs/castle_phi_boost_ab_lambda097_from_003003_20260804/control_lambda097/checkpoints/iteration_004000/training_checkpoint.eqx"
+resume_checkpoint_sha256 = "7c553a864a3a7e7b751b1e3e4695befdae0cb099d898ec770215399e41dac311"
+resume_raw_weights = true
+resume_optimizer_state = true
+resume_ema_weights = true
+resume_start_stage = 4
+previous_device_count = 4
+previous_gpu_layout = "4xH100; envs_per_gpu=512; minibatch_per_gpu=1024"
+current_gpu_layout = "4xH100; envs_per_gpu=512; minibatch_per_gpu=1024"
+previous_num_envs_per_device = 512
+previous_minibatch_size_per_device = 1024
+preserved_global_envs = 2048
+preserved_global_minibatch_size = 4096
+
+pad_to = 21
+min_grid_size = 18
+max_grid_size = 21
+truncation = 1200
+deathtouch_turn = 800
+mountain_density_min = 0.24
+mountain_density_max = 0.26
+pool_size = 200000
+reset_pool_every = 20
+
+history_size = 7
+temporal_window = 512
+observation_schema = "competition_39"
+model_architecture = "conv_transformer"
+depth = 7
+embed_dim = 448
+attention_heads = 8
+ff_factor = 3
+patch_size = 3
+use_bf16 = true
+value_bins = 128
+value_min = -1.0
+value_max = 1.0
+hl_gauss_sigma = 0.04
+conv_channels = 96
+conv_groups = 12
+conv_initial_token_rms_ratio = 0.25
+conv_calibration_samples = 512
+
+num_envs = 512
+num_steps = 512
+num_iterations = 4400
+minibatch_size = 1024
+ppo_epochs = 1
+
+gamma = 1.0
+gae_lambda = 0.97
+clip_epsilon = 0.20
+value_coefficient = 0.50
+max_grad_norm = 0.267
+target_kl = 0.02
+advantage_top_fraction = 0.25
+
+actor_potential_shaping = false
+castle_potential_scale = 0.0
+tactical_build_logit_boost = 0.0
+castle_intervention_full_until = 0
+castle_intervention_anneal_until = 0
+counterfactual_castle_training = false
+residual_build_kind_head = false
+
+learning_rate_numerator = 0.5
+learning_rate_exponent = 1.1
+learning_rate_min = 0.000005
+learning_rate_max = 0.0001
+entropy_start = 0.05
+entropy_power = 0.2
+entropy_min = 0.001
+
+ema_decay = 0.999
+eval_every = 0
+eval_games = 512
+latest_checkpoint_every = 100
+checkpoint_every = 100
+metrics_every = 1
+cadence_relative_to_resume = true
+league_eval_after_training = false
+league_eval_every = 50
+league_eval_maps = 128
+league_eval_seed = 2044
+league_eval_policies = ["raw"]
+league_periodic_raw_max_overhead_fraction = 1.0
+league_opponents = []
+league_checkpoint_name = "frozen_raw_control_004000"
+league_checkpoint_path = "checkpoints/control_004000/training_checkpoint.eqx"
+league_checkpoint_sha256 = "7c553a864a3a7e7b751b1e3e4695befdae0cb099d898ec770215399e41dac311"
+league_checkpoint_maps = 128
+league_checkpoint_policy = "raw"
+
+[[training.curriculum]]
+min_generals_distance = 2
+max_generals_distance = 6
+advance_win_rate = 0.60
+[[training.curriculum]]
+min_generals_distance = 4
+max_generals_distance = 8
+advance_win_rate = 0.60
+[[training.curriculum]]
+min_generals_distance = 6
+max_generals_distance = 13
+advance_win_rate = 0.60
+[[training.curriculum]]
+min_generals_distance = 11
+max_generals_distance = 17
+advance_win_rate = 0.60
+[[training.curriculum]]
+min_generals_distance = 17
+advance_win_rate = 0.60

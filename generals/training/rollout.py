@@ -36,6 +36,9 @@ def collect_self_play_rollout(
     memory_player_one,
     num_steps: int,
     *,
+    castle_flags_player_zero=None,
+    castle_flags_player_one=None,
+    return_castle_state: bool = False,
     observation_schema: str = LEGACY_OBSERVATION_SCHEMA,
     potential_shaping_scale=0.0,
     tactical_build_logit_boost=0.0,
@@ -52,10 +55,17 @@ def collect_self_play_rollout(
     """
     num_envs = states.armies.shape[0]
     memory = _concatenate_players(memory_player_zero, memory_player_one)
+    if castle_flags_player_zero is None:
+        castle_flags_player_zero = jnp.zeros((num_envs,), dtype=jnp.int32)
+    if castle_flags_player_one is None:
+        castle_flags_player_one = jnp.zeros((num_envs,), dtype=jnp.int32)
+    castle_flags = jnp.concatenate(
+        [castle_flags_player_zero, castle_flags_player_one]
+    )
     deathtouch_turn = environment.deathtouch_turn or 800
 
     def scan_step(carry, _):
-        current_states, rng, current_memory = carry
+        current_states, rng, current_memory, current_castle_flags = carry
         obs_zero = jax.vmap(lambda state: get_observation(state, 0))(current_states)
         obs_one = jax.vmap(lambda state: get_observation(state, 1))(current_states)
         observations = _concatenate_players(obs_zero, obs_one)
@@ -173,6 +183,29 @@ def collect_self_play_rollout(
                 axis=1,
             )[:, 0]
         )
+        build_actions = (action_indices >= build_start) & (action_indices < PASS_INDEX)
+        legal_build_opportunities = jnp.any(
+            masks[:, build_start:PASS_INDEX], axis=-1
+        )
+        completed_castle_counts = current_castle_flags + build_actions.astype(
+            jnp.int32
+        )
+        completed_game_with_build = finished & (
+            (completed_castle_counts[:num_envs] > 0)
+            | (completed_castle_counts[num_envs:] > 0)
+        )
+        completed_player_game_with_build = (
+            jnp.concatenate([finished, finished]) & (completed_castle_counts > 0)
+        )
+        completed_player_games = jnp.concatenate([finished, finished])
+        completed_game_builds = jnp.where(
+            completed_player_games, completed_castle_counts, 0
+        )
+        current_castle_flags = jnp.where(
+            completed_player_games,
+            jnp.zeros_like(completed_castle_counts),
+            completed_castle_counts,
+        )
         data = (
             augmented.astype(jnp.bfloat16),
             histories.astype(jnp.bfloat16),
@@ -190,11 +223,17 @@ def collect_self_play_rollout(
             base_policy_statistics,
             behavior_policy_statistics,
             selected_tactical_build,
+            build_actions,
+            legal_build_opportunities,
+            completed_game_with_build,
+            completed_player_game_with_build,
+            completed_player_games,
+            completed_game_builds,
         )
-        return (next_states, rng, updated_memory), data
+        return (next_states, rng, updated_memory, current_castle_flags), data
 
-    (states, key, memory), rollout = jax.lax.scan(
-        scan_step, (states, key, memory), None, length=num_steps
+    (states, key, memory, castle_flags), rollout = jax.lax.scan(
+        scan_step, (states, key, memory, castle_flags), None, length=num_steps
     )
     (
         observations,
@@ -213,6 +252,12 @@ def collect_self_play_rollout(
         base_policy_statistics,
         behavior_policy_statistics,
         selected_tactical_build,
+        build_actions,
+        legal_build_opportunities,
+        completed_game_with_build,
+        completed_player_game_with_build,
+        completed_player_games,
+        completed_game_builds,
     ) = rollout
 
     # Bootstrap only trajectories that remain live at the rollout boundary.
@@ -258,5 +303,21 @@ def collect_self_play_rollout(
         base_policy_statistics,
         behavior_policy_statistics,
         selected_tactical_build,
+        build_actions,
+        legal_build_opportunities,
+        completed_game_with_build,
+        completed_player_game_with_build,
+        completed_player_games,
+        completed_game_builds,
     )
+    if return_castle_state:
+        return (
+            states,
+            rollout,
+            key,
+            memory_zero,
+            memory_one,
+            castle_flags[:num_envs],
+            castle_flags[num_envs:],
+        )
     return states, rollout, key, memory_zero, memory_one

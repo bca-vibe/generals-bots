@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Style options — critic castle scatter</title>
+<style>
+  body { margin: 0; font-family: Georgia, serif; background: #1a1a1a; color: #eee; }
+  header {
+    position: sticky; top: 0; z-index: 10; background: #111; padding: 10px 20px;
+    display: flex; gap: 16px; align-items: baseline; border-bottom: 1px solid #333;
+    font-family: Arial, sans-serif;
+  }
+  header b { font-size: 14px; letter-spacing: 1px; }
+  header a { color: #7ec8e3; font-size: 13px; text-decoration: none; }
+  header a:hover { text-decoration: underline; }
+  section { border-bottom: 4px solid #000; }
+  iframe { display: block; width: 100%; height: 1080px; border: 0; }
+</style>
+</head>
+<body>
+<header>
+  <b>STYLE OPTIONS</b>
+  <a href="#opt1">1 · 1950s comic</a>
+  <a href="#opt2">2 · deep space</a>
+  <a href="#opt3">3 · arcade</a>
+  <a href="#opt4">4 · fog of war</a>
+  <a href="#opt5">5 · dossier</a>
+  <a href="critic_castle_scatter.html">open 1 alone</a>
+  <a href="critic_castle_scatter_space.html">open 2 alone</a>
+  <a href="critic_castle_scatter_arcade.html">open 3 alone</a>
+  <a href="critic_castle_scatter_fog.html">open 4 alone</a>
+  <a href="critic_castle_scatter_dossier.html">open 5 alone</a>
+</header>
+<section id="opt1"><iframe src="critic_castle_scatter.html" title="Option 1: 1950s comic"></iframe></section>
+<section id="opt2"><iframe src="critic_castle_scatter_space.html" title="Option 2: deep space"></iframe></section>
+<section id="opt3"><iframe src="critic_castle_scatter_arcade.html" title="Option 3: arcade"></iframe></section>
+<section id="opt4"><iframe src="critic_castle_scatter_fog.html" title="Option 4: fog of war"></iframe></section>
+<section id="opt5"><iframe src="critic_castle_scatter_dossier.html" title="Option 5: war-room dossier"></iframe></section>
+</body>
+</html>
