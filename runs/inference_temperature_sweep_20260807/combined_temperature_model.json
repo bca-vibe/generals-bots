@@ -1,0 +1,161 @@
+{
+  "chi_squared": 22.787883230661183,
+  "degrees_of_freedom": 28,
+  "dispersion": 1.0,
+  "games": 40960,
+  "inputs": [
+    "coarse_14k/round_robin.json",
+    "fine_025_050/round_robin.json",
+    "low_000_025/round_robin.json"
+  ],
+  "matchup_records": 40,
+  "method": "inverse-variance weighted least squares on paired-map score logits, anchored at greedy",
+  "ranking": [
+    {
+      "label": "T=0.3",
+      "logit_standard_error": 0.03713633755434762,
+      "logit_strength_vs_greedy": 0.02025585373503296,
+      "modeled_score_vs_greedy": 0.5050637902956767,
+      "modeled_score_vs_greedy_ci95_high": 0.5232440026165769,
+      "modeled_score_vs_greedy_ci95_low": 0.4868701772542356,
+      "temperature": 0.3
+    },
+    {
+      "label": "T=0.25",
+      "logit_standard_error": 0.02351940379511685,
+      "logit_strength_vs_greedy": 0.020186019722463106,
+      "modeled_score_vs_greedy": 0.50504633357705,
+      "modeled_score_vs_greedy_ci95_high": 0.5165649482884618,
+      "modeled_score_vs_greedy_ci95_low": 0.49352235950840145,
+      "temperature": 0.25
+    },
+    {
+      "label": "greedy",
+      "logit_standard_error": 0.0,
+      "logit_strength_vs_greedy": 0.0,
+      "modeled_score_vs_greedy": 0.5,
+      "modeled_score_vs_greedy_ci95_high": 0.5,
+      "modeled_score_vs_greedy_ci95_low": 0.5,
+      "temperature": 0.0
+    },
+    {
+      "label": "T=0.35",
+      "logit_standard_error": 0.037176511521240886,
+      "logit_strength_vs_greedy": -0.004282368144152701,
+      "modeled_score_vs_greedy": 0.4989294096000622,
+      "modeled_score_vs_greedy_ci95_high": 0.5171391809920487,
+      "modeled_score_vs_greedy_ci95_low": 0.48072247780424604,
+      "temperature": 0.35
+    },
+    {
+      "label": "T=0.1",
+      "logit_standard_error": 0.0303279589906882,
+      "logit_strength_vs_greedy": -0.006358503322738113,
+      "modeled_score_vs_greedy": 0.498410379525083,
+      "modeled_score_vs_greedy_ci95_high": 0.5132679585257073,
+      "modeled_score_vs_greedy_ci95_low": 0.4835556072624353,
+      "temperature": 0.1
+    },
+    {
+      "label": "T=0.05",
+      "logit_standard_error": 0.030071828018210837,
+      "logit_strength_vs_greedy": -0.008694346726239224,
+      "modeled_score_vs_greedy": 0.4978264270104231,
+      "modeled_score_vs_greedy_ci95_high": 0.512558966852021,
+      "modeled_score_vs_greedy_ci95_low": 0.4830976604261756,
+      "temperature": 0.05
+    },
+    {
+      "label": "T=0.5",
+      "logit_standard_error": 0.028864183011586688,
+      "logit_strength_vs_greedy": -0.01142504234950391,
+      "modeled_score_vs_greedy": 0.4971437704815721,
+      "modeled_score_vs_greedy_ci95_high": 0.5112852721522699,
+      "modeled_score_vs_greedy_ci95_low": 0.4830068370413293,
+      "temperature": 0.5
+    },
+    {
+      "label": "T=0.15",
+      "logit_standard_error": 0.030933446670011126,
+      "logit_strength_vs_greedy": -0.012959370203417716,
+      "modeled_score_vs_greedy": 0.49676020279140504,
+      "modeled_score_vs_greedy_ci95_high": 0.5119152899979215,
+      "modeled_score_vs_greedy_ci95_low": 0.4816110663439311,
+      "temperature": 0.15
+    },
+    {
+      "label": "T=0.4",
+      "logit_standard_error": 0.03675610066707754,
+      "logit_strength_vs_greedy": -0.023174287114413033,
+      "modeled_score_vs_greedy": 0.49420668749278285,
+      "modeled_score_vs_greedy_ci95_high": 0.5122144869120396,
+      "modeled_score_vs_greedy_ci95_low": 0.47621390683712234,
+      "temperature": 0.4
+    },
+    {
+      "label": "T=0.45",
+      "logit_standard_error": 0.03709662078665334,
+      "logit_strength_vs_greedy": -0.031133473038270132,
+      "modeled_score_vs_greedy": 0.49221726037662317,
+      "modeled_score_vs_greedy_ci95_high": 0.5103924789707285,
+      "modeled_score_vs_greedy_ci95_low": 0.47406259101994463,
+      "temperature": 0.45
+    },
+    {
+      "label": "T=0.2",
+      "logit_standard_error": 0.030853804465967482,
+      "logit_strength_vs_greedy": -0.03279568763005414,
+      "modeled_score_vs_greedy": 0.49180181288086355,
+      "modeled_score_vs_greedy_ci95_high": 0.506919000589616,
+      "modeled_score_vs_greedy_ci95_low": 0.4766996025609637,
+      "temperature": 0.2
+    },
+    {
+      "label": "T=0.75",
+      "logit_standard_error": 0.03381938690901209,
+      "logit_strength_vs_greedy": -0.07016261096460132,
+      "modeled_score_vs_greedy": 0.48246653946701196,
+      "modeled_score_vs_greedy_ci95_high": 0.49903084805797665,
+      "modeled_score_vs_greedy_ci95_low": 0.4659406749587953,
+      "temperature": 0.75
+    },
+    {
+      "label": "T=1",
+      "logit_standard_error": 0.03364359119065622,
+      "logit_strength_vs_greedy": -0.13628482796944724,
+      "modeled_score_vs_greedy": 0.46598143052774216,
+      "modeled_score_vs_greedy_ci95_high": 0.48242140061768085,
+      "modeled_score_vs_greedy_ci95_low": 0.44961502613820026,
+      "temperature": 1.0
+    }
+  ],
+  "repeated_direct_pairs": [
+    {
+      "draws": 40.0,
+      "experiments": [
+        "coarse_14k",
+        "low_000_025"
+      ],
+      "games": 2048.0,
+      "losses_low": 1008.0,
+      "score_low": 0.498046875,
+      "temperature_high": 0.25,
+      "temperature_low": 0.0,
+      "wins_low": 1000.0
+    },
+    {
+      "draws": 34.0,
+      "experiments": [
+        "coarse_14k",
+        "fine_025_050"
+      ],
+      "games": 2048.0,
+      "losses_low": 984.0,
+      "score_low": 0.51123046875,
+      "temperature_high": 0.5,
+      "temperature_low": 0.25,
+      "wins_low": 1030.0
+    }
+  ],
+  "schema": "combined_temperature_strength_model_v1"
+}

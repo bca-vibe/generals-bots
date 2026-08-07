@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="629" viewBox="0 0 940 629">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#222}.title{font-size:21px;font-weight:700}.sub{font-size:13px;fill:#555}.label{font-size:14px}.value{font-size:12px;font-weight:700}.axis{font-size:11px;fill:#666}</style>
+<text class="title" x="24" y="30">Combined cross-seed temperature model</text>
+<text class="sub" x="24" y="52">Modeled score versus greedy; bars show paired-map 95% intervals</text>
+<line x1="290.0" x2="290.0" y1="66" y2="591" stroke="#ddd"/>
+<text class="axis" x="290.0" y="611" text-anchor="middle">0.44</text>
+<line x1="402.00000000000006" x2="402.00000000000006" y1="66" y2="591" stroke="#ddd"/>
+<text class="axis" x="402.00000000000006" y="611" text-anchor="middle">0.46</text>
+<line x1="513.9999999999998" x2="513.9999999999998" y1="66" y2="591" stroke="#ddd"/>
+<text class="axis" x="513.9999999999998" y="611" text-anchor="middle">0.48</text>
+<line x1="625.9999999999999" x2="625.9999999999999" y1="66" y2="591" stroke="#999"/>
+<text class="axis" x="625.9999999999999" y="611" text-anchor="middle">0.50</text>
+<line x1="738.0" x2="738.0" y1="66" y2="591" stroke="#ddd"/>
+<text class="axis" x="738.0" y="611" text-anchor="middle">0.52</text>
+<line x1="850.0" x2="850.0" y1="66" y2="591" stroke="#ddd"/>
+<text class="axis" x="850.0" y="611" text-anchor="middle">0.54</text>
+<text class="label" x="24" y="98">1. T=0.3</text>
+<line x1="552.4729926237192" x2="756.1664146528304" y1="93" y2="93" stroke="#334155" stroke-width="3"/>
+<circle cx="654.3572256557895" cy="93" r="6" fill="#2563eb"/>
+<text class="value" x="764.1664146528304" y="97">0.5051</text>
+<text class="label" x="24" y="136">2. T=0.25</text>
+<line x1="589.725213247048" x2="718.7637104153858" y1="131" y2="131" stroke="#334155" stroke-width="3"/>
+<circle cx="654.2594680314797" cy="131" r="6" fill="#2563eb"/>
+<text class="value" x="726.7637104153858" y="135">0.5050</text>
+<text class="label" x="24" y="174">3. greedy</text>
+<line x1="625.9999999999999" x2="625.9999999999999" y1="169" y2="169" stroke="#334155" stroke-width="3"/>
+<circle cx="625.9999999999999" cy="169" r="6" fill="#2563eb"/>
+<text class="value" x="633.9999999999999" y="173">0.5000</text>
+<text class="label" x="24" y="212">4. T=0.35</text>
+<line x1="518.0458757037777" x2="721.9794135554725" y1="207" y2="207" stroke="#334155" stroke-width="3"/>
+<circle cx="620.0046937603482" cy="207" r="6" fill="#2563eb"/>
+<text class="value" x="729.9794135554725" y="211">0.4989</text>
+<text class="label" x="24" y="250">5. T=0.1</text>
+<line x1="533.9114006696375" x2="700.3005677439606" y1="245" y2="245" stroke="#334155" stroke-width="3"/>
+<circle cx="617.0981253404645" cy="245" r="6" fill="#2563eb"/>
+<text class="value" x="708.3005677439606" y="249">0.4984</text>
+<text class="label" x="24" y="288">6. T=0.05</text>
+<line x1="531.3468983865831" x2="696.3302143713172" y1="283" y2="283" stroke="#334155" stroke-width="3"/>
+<circle cx="613.8279912583694" cy="283" r="6" fill="#2563eb"/>
+<text class="value" x="704.3302143713172" y="287">0.4978</text>
+<text class="label" x="24" y="326">7. T=0.5</text>
+<line x1="530.838287431444" x2="689.1975240527115" y1="321" y2="321" stroke="#334155" stroke-width="3"/>
+<circle cx="610.0051146968036" cy="321" r="6" fill="#2563eb"/>
+<text class="value" x="697.1975240527115" y="325">0.4971</text>
+<text class="label" x="24" y="364">8. T=0.15</text>
+<line x1="523.021971526014" x2="692.72562398836" y1="359" y2="359" stroke="#334155" stroke-width="3"/>
+<circle cx="607.857135631868" cy="359" r="6" fill="#2563eb"/>
+<text class="value" x="700.72562398836" y="363">0.4968</text>
+<text class="label" x="24" y="402">9. T=0.4</text>
+<line x1="492.797878287885" x2="694.4011267074218" y1="397" y2="397" stroke="#334155" stroke-width="3"/>
+<circle cx="593.5574499595839" cy="397" r="6" fill="#2563eb"/>
+<text class="value" x="702.4011267074218" y="401">0.4942</text>
+<text class="label" x="24" y="440">10. T=0.45</text>
+<line x1="480.7505097116899" x2="684.1978822360793" y1="435" y2="435" stroke="#334155" stroke-width="3"/>
+<circle cx="582.4166581090897" cy="435" r="6" fill="#2563eb"/>
+<text class="value" x="692.1978822360793" y="439">0.4922</text>
+<text class="label" x="24" y="478">11. T=0.2</text>
+<line x1="495.5177743413967" x2="664.7464033018496" y1="473" y2="473" stroke="#334155" stroke-width="3"/>
+<circle cx="580.0901521328358" cy="473" r="6" fill="#2563eb"/>
+<text class="value" x="672.7464033018496" y="477">0.4918</text>
+<text class="label" x="24" y="516">12. T=0.75</text>
+<line x1="435.2677797692537" x2="620.5727491246691" y1="511" y2="511" stroke="#334155" stroke-width="3"/>
+<circle cx="527.8126210152668" cy="511" r="6" fill="#2563eb"/>
+<text class="value" x="628.5727491246691" y="515">0.4825</text>
+<text class="label" x="24" y="554">13. T=1</text>
+<line x1="343.84414637392143" x2="527.5598434590127" y1="549" y2="549" stroke="#334155" stroke-width="3"/>
+<circle cx="435.49601095535604" cy="549" r="6" fill="#2563eb"/>
+<text class="value" x="535.5598434590127" y="553">0.4660</text>
+</svg>
