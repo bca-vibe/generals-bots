@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+.cache
+.jax_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+*.pyo
+.DS_Store
+artifacts
+checkpoints
+runs
+submissions
+competition/agents/*/target
+competition/agents/*/agent

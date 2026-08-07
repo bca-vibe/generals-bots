@@ -1,0 +1,16 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "--file"
+      - "Dockerfile.givemeanode"
+      - "--tag"
+      - "us-central1-docker.pkg.dev/$PROJECT_ID/generals-training/castle-trainer:${_IMAGE_TAG}"
+      - "."
+images:
+  - "us-central1-docker.pkg.dev/$PROJECT_ID/generals-training/castle-trainer:${_IMAGE_TAG}"
+options:
+  machineType: "E2_HIGHCPU_32"
+  diskSizeGb: 100
+substitutions:
+  _IMAGE_TAG: "latest"

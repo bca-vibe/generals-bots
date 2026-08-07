@@ -26,6 +26,7 @@ RUN uv python install ${PYTHON_VERSION} \
     && uv venv --python ${PYTHON_VERSION} /opt/venv \
     && uv sync --locked --no-install-project --extra train --extra tracking --python /opt/venv/bin/python \
     && uv pip install --python /opt/venv/bin/python "jax[cuda12-local]==${JAX_VERSION}" \
+    && uv pip install --python /opt/venv/bin/python "huggingface_hub==1.25.1" \
     && rm -rf /var/cache/uv
 
 COPY . /workspace
