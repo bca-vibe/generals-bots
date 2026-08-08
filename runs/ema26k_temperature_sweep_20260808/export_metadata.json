@@ -1,0 +1,11 @@
+{
+  "architecture": "conv_transformer",
+  "checkpoint": "bca-vibe/generals-bot@main:runs/castle_ppo_gmn_8xh100_original_from_021001_to_027000_20260807/checkpoints/iteration_026000/training_checkpoint.eqx",
+  "checkpoint_sha256": "fa98e35d79b0d3637dbc90408da69d1b9b3c2113d1210f392b53e6f4fb37c81e",
+  "curriculum_stage": 4,
+  "iteration": 26000,
+  "observation_schema": "competition_39",
+  "policy": "ema",
+  "weights_bytes": 25586541,
+  "weights_sha256": "9fb390390e9317d69c6448fd23317e7ad5e70aa37545823b7043405eaa150bac"
+}

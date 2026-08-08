@@ -1,0 +1,4 @@
+temperature_low,temperature_high,wins_low,losses_low,draws,games,score_low,experiments
+0.0,0.1,1049.0,963.0,36.0,2048.0,0.52099609375,broad;fine
+0.0,0.25,1024.0,993.0,31.0,2048.0,0.507568359375,broad;fine
+0.1,0.25,1007.0,987.0,54.0,2048.0,0.5048828125,broad;fine

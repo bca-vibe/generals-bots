@@ -1,0 +1,119 @@
+{
+  "chi_squared": 12.571412514607417,
+  "degrees_of_freedom": 18,
+  "dispersion": 1.0,
+  "games": 25600,
+  "inputs": [
+    "broad.json",
+    "fine.json"
+  ],
+  "matchup_records": 25,
+  "method": "inverse-variance weighted least squares on paired-map score logits, anchored at greedy",
+  "ranking": [
+    {
+      "label": "T=0.05",
+      "logit_standard_error": 0.029335498432954243,
+      "logit_strength_vs_greedy": 0.030570852790072274,
+      "modeled_score_vs_greedy": 0.5076421180277845,
+      "modeled_score_vs_greedy_ci95_high": 0.5220028879791601,
+      "modeled_score_vs_greedy_ci95_low": 0.49326872566880364,
+      "temperature": 0.05
+    },
+    {
+      "label": "T=0.15",
+      "logit_standard_error": 0.029461276127744424,
+      "logit_strength_vs_greedy": 0.02377951771126078,
+      "modeled_score_vs_greedy": 0.505944599308322,
+      "modeled_score_vs_greedy_ci95_high": 0.5203696244323551,
+      "modeled_score_vs_greedy_ci95_low": 0.4915096703082219,
+      "temperature": 0.15
+    },
+    {
+      "label": "greedy",
+      "logit_standard_error": 0.0,
+      "logit_strength_vs_greedy": 0.0,
+      "modeled_score_vs_greedy": 0.5,
+      "modeled_score_vs_greedy_ci95_high": 0.5,
+      "modeled_score_vs_greedy_ci95_low": 0.5,
+      "temperature": 0.0
+    },
+    {
+      "label": "T=0.25",
+      "logit_standard_error": 0.023558477146622982,
+      "logit_strength_vs_greedy": -0.030409139648847165,
+      "modeled_score_vs_greedy": 0.49239830086301883,
+      "modeled_score_vs_greedy_ci95_high": 0.5039412872559872,
+      "modeled_score_vs_greedy_ci95_low": 0.48086341349248213,
+      "temperature": 0.25
+    },
+    {
+      "label": "T=0.2",
+      "logit_standard_error": 0.029566829215339006,
+      "logit_strength_vs_greedy": -0.03456820546412992,
+      "modeled_score_vs_greedy": 0.4913588091072165,
+      "modeled_score_vs_greedy_ci95_high": 0.5058454286174302,
+      "modeled_score_vs_greedy_ci95_low": 0.47688668707940923,
+      "temperature": 0.2
+    },
+    {
+      "label": "T=0.1",
+      "logit_standard_error": 0.02363822129577364,
+      "logit_strength_vs_greedy": -0.036871513282235056,
+      "modeled_score_vs_greedy": 0.49078316585280624,
+      "modeled_score_vs_greedy_ci95_high": 0.5023648324805784,
+      "modeled_score_vs_greedy_ci95_low": 0.4792113845428225,
+      "temperature": 0.1
+    },
+    {
+      "label": "T=0.5",
+      "logit_standard_error": 0.03181581858544976,
+      "logit_strength_vs_greedy": -0.044971049801395206,
+      "modeled_score_vs_greedy": 0.48875913194237824,
+      "modeled_score_vs_greedy_ci95_high": 0.5043468791371036,
+      "modeled_score_vs_greedy_ci95_low": 0.4731932154369065,
+      "temperature": 0.5
+    },
+    {
+      "label": "T=1",
+      "logit_standard_error": 0.032591863745667485,
+      "logit_strength_vs_greedy": -0.16138866563902654,
+      "modeled_score_vs_greedy": 0.45974018062863464,
+      "modeled_score_vs_greedy_ci95_high": 0.47564214316692077,
+      "modeled_score_vs_greedy_ci95_low": 0.443919773928703,
+      "temperature": 1.0
+    }
+  ],
+  "repeated_direct_pairs": [
+    {
+      "draws": 36.0,
+      "experiments": "broad;fine",
+      "games": 2048.0,
+      "losses_low": 963.0,
+      "score_low": 0.52099609375,
+      "temperature_high": 0.1,
+      "temperature_low": 0.0,
+      "wins_low": 1049.0
+    },
+    {
+      "draws": 31.0,
+      "experiments": "broad;fine",
+      "games": 2048.0,
+      "losses_low": 993.0,
+      "score_low": 0.507568359375,
+      "temperature_high": 0.25,
+      "temperature_low": 0.0,
+      "wins_low": 1024.0
+    },
+    {
+      "draws": 54.0,
+      "experiments": "broad;fine",
+      "games": 2048.0,
+      "losses_low": 987.0,
+      "score_low": 0.5048828125,
+      "temperature_high": 0.25,
+      "temperature_low": 0.1,
+      "wins_low": 1007.0
+    }
+  ],
+  "schema": "ema26k_temperature_model_v1"
+}

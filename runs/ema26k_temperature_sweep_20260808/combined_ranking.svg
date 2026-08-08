@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="422" viewBox="0 0 900 422">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#1f2937}.title{font-size:20px;font-weight:700}.label{font-size:14px}.value{font-size:13px;font-weight:600}.axis{stroke:#d1d5db;stroke-width:1}.ci{stroke:#111827;stroke-width:2}</style>
+<text x="24" y="30" class="title">26k EMA temperature model versus greedy</text>
+<line x1="618.0" y1="48" x2="618.0" y2="402" class="axis"/>
+<text x="24" y="76" class="label">T=0.05</text>
+<line x1="574.9" y1="69" x2="758.8" y2="69" class="ci"/>
+<circle cx="666.9" cy="69" r="7" fill="#2563eb"/>
+<text x="768.8" y="74" class="value">50.76%</text>
+<text x="24" y="120" class="label">T=0.15</text>
+<line x1="563.7" y1="113" x2="748.4" y2="113" class="ci"/>
+<circle cx="656.0" cy="113" r="7" fill="#2563eb"/>
+<text x="758.4" y="118" class="value">50.59%</text>
+<text x="24" y="164" class="label">greedy</text>
+<line x1="618.0" y1="157" x2="618.0" y2="157" class="ci"/>
+<circle cx="618.0" cy="157" r="7" fill="#64748b"/>
+<text x="628.0" y="162" class="value">50.00%</text>
+<text x="24" y="208" class="label">T=0.25</text>
+<line x1="495.5" y1="201" x2="643.2" y2="201" class="ci"/>
+<circle cx="569.3" cy="201" r="7" fill="#64748b"/>
+<text x="653.2" y="206" class="value">49.24%</text>
+<text x="24" y="252" class="label">T=0.2</text>
+<line x1="470.1" y1="245" x2="655.4" y2="245" class="ci"/>
+<circle cx="562.7" cy="245" r="7" fill="#64748b"/>
+<text x="665.4" y="250" class="value">49.14%</text>
+<text x="24" y="296" class="label">T=0.1</text>
+<line x1="485.0" y1="289" x2="633.1" y2="289" class="ci"/>
+<circle cx="559.0" cy="289" r="7" fill="#64748b"/>
+<text x="643.1" y="294" class="value">49.08%</text>
+<text x="24" y="340" class="label">T=0.5</text>
+<line x1="446.4" y1="333" x2="645.8" y2="333" class="ci"/>
+<circle cx="546.1" cy="333" r="7" fill="#64748b"/>
+<text x="655.8" y="338" class="value">48.88%</text>
+<text x="24" y="384" class="label">T=1</text>
+<line x1="259.1" y1="377" x2="462.1" y2="377" class="ci"/>
+<circle cx="360.3" cy="377" r="7" fill="#64748b"/>
+<text x="472.1" y="382" class="value">45.97%</text>
+</svg>
